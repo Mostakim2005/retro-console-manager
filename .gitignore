@@ -1,0 +1,27 @@
+# User-specific runtime storage configurations
+storage_config.json
+
+# Local ROMs and BIOS folders
+Console_Games/
+PS1/
+PS2/
+BIOS/
+
+# Binary game ROMs, ISOs, compressed archives
+*.zip
+*.iso
+*.chd
+*.bin
+*.cue
+*.7z
+*.rar
+*.gz
+
+# OS-generated files & scratch artifacts
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.log
+scratch/
+test_*.ps1
+verify_*.ps1
