@@ -1,0 +1,62 @@
+name: Build & Release Portable EXE
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-portable:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Run AST Syntax & Encoding Verification
+        shell: powershell
+        run: |
+          $path = 'retro-console-manager.ps1'
+          $txt = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
+          $errors = $null
+          $tokens = $null
+          [void][System.Management.Automation.Language.Parser]::ParseInput($txt, [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_ }
+              exit 1
+          }
+          $bytes = [System.IO.File]::ReadAllBytes($path)
+          if (-not ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)) {
+              Write-Error "Missing UTF-8 BOM!"
+              exit 1
+          }
+          Write-Host "AST & UTF-8 BOM Verification Passed."
+
+      - name: Compile Portable EXE with PS2EXE
+        shell: powershell
+        run: |
+          Install-Module -Name ps2exe -Force -Scope CurrentUser
+          New-Item -ItemType Directory -Path "dist" -Force | Out-Null
+          Invoke-ps2exe -InputFile "retro-console-manager.ps1" `
+                        -OutputFile "dist\RetroConsoleManager-Portable.exe" `
+                        -NoConsole -STA `
+                        -Title "Retro Console Manager" `
+                        -Product "Retro Console Manager (PS1 & PS2)" `
+                        -Version "1.0.0.0"
+          Copy-Item "games_catalog.json" -Destination "dist\games_catalog.json"
+          Copy-Item "README.md" -Destination "dist\README.md"
+          Copy-Item "LICENSE" -Destination "dist\LICENSE"
+          Copy-Item "THIRD_PARTY_NOTICES.md" -Destination "dist\THIRD_PARTY_NOTICES.md"
+          Compress-Archive -Path "dist\*" -DestinationPath "RetroConsoleManager-Portable-x64.zip" -Force
+
+      - name: Attach Portable Binary to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/RetroConsoleManager-Portable.exe
+            RetroConsoleManager-Portable-x64.zip
+          generate_release_notes: true

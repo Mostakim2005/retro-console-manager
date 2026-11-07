@@ -20,3 +20,4 @@ This project incorporates and interfaces with open-source and public-domain thir
 | --- | --- | --- | --- | --- |
 | **Windows PowerShell 5.1+ Runtime** | Microsoft Corporation | MIT License | Script execution host, AST parser check engine, and event pump | [PowerShell License](https://github.com/PowerShell/PowerShell/blob/master/LICENSE.txt) |
 | **Microsoft .NET Framework 4.5+ SDK** | Microsoft Corporation | Microsoft Software License Terms | C# Roslyn in-memory dynamic compiler (`Add-Type -TypeDefinition`) | [Microsoft .NET Terms](https://dotnet.microsoft.com/) |
+| **PS2EXE** | Ingo Karstein / Markus Scholtes | Microsoft Public License (Ms-PL) | GitHub Actions cloud packager for standalone portable `.exe` builds | [PS2EXE License](https://github.com/MScholtes/PS2EXE/blob/master/LICENSE) |
