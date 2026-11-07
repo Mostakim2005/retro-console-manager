@@ -1,8 +1,9 @@
 ﻿# =====================================================================
 # RETRO CONSOLE GAME MANAGER - REFINED MODERN GUI (V4)
 # - Balanced Header Bar: Title Center, Storage Left & Right Symmetry
-# - Action Bar: Search & Multi-Select Left, [?] Help, BIOS & Download Right
-# - Interlinked Filters & Combinable Multi-Column Sorting
+# - Action Bar: Search, Multi-Select, Reset Filters, [?] Help, BIOS & Download
+# - Most-Recently-Changed Priority Queue Multi-Sorting ([#1], [#2], [#3])
+# - Coherent Size-Tier Grouping (Solves Raw-Byte Tie Problem)
 # - Double-Click Custom Storage Target Selector & Portable Config
 # - Pure ASCII Headers (100% Fix for Mojibake Artifacts like 'a-?')
 # - Zero Contrast Inversion across Windows Themes
@@ -25,6 +26,7 @@ public class RetroGameItem : INotifyPropertyChanged {
     public string Graphics { get; set; }
     public string Size { get; set; }
     public double SizeBytes { get; set; }
+    public int SizeTier { get; set; }
     public string Status { get; set; }
     public object RawItem { get; set; }
 
@@ -130,11 +132,28 @@ function Get-Catalog {
         foreach ($item in $raw) {
             $sz = $item.size.ToUpper()
             $num = [double]($sz -replace '[^\d\.]', '')
-            if ($sz -like "*GB*") {
-                $item | Add-Member -NotePropertyName "SizeBytes" -NotePropertyValue ($num * 1024 * 1024 * 1024) -Force
+            $bytes = if ($sz -like "*GB*") { $num * 1024 * 1024 * 1024 } else { $num * 1024 * 1024 }
+            $item | Add-Member -NotePropertyName "SizeBytes" -NotePropertyValue $bytes -Force
+
+            # SizeTier for multi-tier coherent sorting:
+            # Tier 1 (Compact): < 500 MB
+            # Tier 2 (Medium-Small): 500 MB - 1 GB
+            # Tier 3 (Medium): 1 GB - 2 GB
+            # Tier 4 (Large): 2 GB - 3.5 GB
+            # Tier 5 (Extra Large): >= 3.5 GB
+            $tier = if ($bytes -lt (500 * 1024 * 1024)) {
+                1
+            } elseif ($bytes -lt (1024 * 1024 * 1024)) {
+                2
+            } elseif ($bytes -lt (2 * 1024 * 1024 * 1024)) {
+                3
+            } elseif ($bytes -lt (3.5 * 1024 * 1024 * 1024)) {
+                4
             } else {
-                $item | Add-Member -NotePropertyName "SizeBytes" -NotePropertyValue ($num * 1024 * 1024) -Force
+                5
             }
+            $item | Add-Member -NotePropertyName "SizeTier" -NotePropertyValue $tier -Force
+
             if (-not $item.year) {
                 $item | Add-Member -NotePropertyName "year" -NotePropertyValue 2004 -Force
             }
@@ -326,7 +345,7 @@ function Get-FreeSpaceGB($driveLetter) {
     <Grid Margin="14">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/> <!-- Row 0: Merged Balanced Top Bar (Storage Left, Title Center, Storage Right) -->
-            <RowDefinition Height="Auto"/> <!-- Row 1: Search + Multi-Select + Help + BIOS + Download Action Bar -->
+            <RowDefinition Height="Auto"/> <!-- Row 1: Search + Multi-Select + Reset + Help + BIOS + Download Action Bar -->
             <RowDefinition Height="*"/>    <!-- Row 2: Games Table -->
             <RowDefinition Height="Auto"/> <!-- Row 3: Progress Bar -->
             <RowDefinition Height="Auto"/> <!-- Row 4: Status Footer -->
@@ -341,7 +360,7 @@ function Get-FreeSpaceGB($driveLetter) {
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Column 0 (Left): Hard Disk Drive (E:) Storage Pill -->
+                <!-- Column 0 (Left): Hard Disk Drive Storage Pill -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
                     <RadioButton Name="rbHDD" GroupName="StorageTarget" Content="Hard Disk Drive (E:) [Loading...]" Style="{StaticResource LargeStoragePill}" IsChecked="True"/>
                 </StackPanel>
@@ -350,14 +369,14 @@ function Get-FreeSpaceGB($driveLetter) {
                 <TextBlock Grid.Column="1" Text="RETRO CONSOLE MANAGER" FontWeight="Bold" FontSize="16" Foreground="#38BDF8" 
                            VerticalAlignment="Center" HorizontalAlignment="Center"/>
 
-                <!-- Column 2 (Right): Solid State Drive (C:) Storage Pill -->
+                <!-- Column 2 (Right): Solid State Drive Storage Pill -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <RadioButton Name="rbSSD" GroupName="StorageTarget" Content="Solid State Drive (C:) [Loading...]" Style="{StaticResource LargeStoragePill}" Margin="0"/>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <!-- ROW 1: SEARCH, MULTI-SELECT, HELP & DOWNLOAD ACTION BAR -->
+        <!-- ROW 1: SEARCH, MULTI-SELECT, RESET, HELP & DOWNLOAD ACTION BAR -->
         <Border Grid.Row="1" Background="#111827" CornerRadius="6" Padding="14,8" Margin="0,0,0,8" BorderBrush="#1F2937" BorderThickness="1">
             <DockPanel LastChildFill="False">
                 <!-- Left: Search Box -->
@@ -368,7 +387,7 @@ function Get-FreeSpaceGB($driveLetter) {
                              ToolTip="Type keyword to filter games by title, genre, or system"/>
                 </StackPanel>
 
-                <!-- Center: Multi-Selection Controls, Counter & Help Button -->
+                <!-- Center: Multi-Selection Controls, Counter, Help Button & Reset Filters -->
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
                     <TextBlock Text="Select:" Foreground="#94A3B8" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
                     <Button Name="btnSelectAll" Content="All" Margin="0,0,5,0" Padding="10,4"/>
@@ -378,6 +397,9 @@ function Get-FreeSpaceGB($driveLetter) {
                     <Button Name="btnHelp" Content="?" Width="26" Height="26" Padding="0" Margin="0,0,8,0" FontWeight="Bold" 
                             Foreground="#38BDF8" Background="#1E293B" BorderBrush="#334155" BorderThickness="1" 
                             VerticalAlignment="Center" ToolTip="Click for Controls &amp; Filter Help"/>
+                    <Button Name="btnResetFilters" Content="Reset Filters" Margin="0,0,14,0" Padding="10,4" 
+                            Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155" 
+                            ToolTip="Reset all filters, search text, and sorting back to default"/>
                 </StackPanel>
 
                 <!-- Right: Download Selected Games Button + Open BIOS Folder -->
@@ -410,7 +432,7 @@ function Get-FreeSpaceGB($driveLetter) {
                     <!-- Column 1: No. (Reset all sorts to catalog ID) -->
                     <GridViewColumn Width="46" DisplayMemberBinding="{Binding Id}">
                         <GridViewColumn.Header>
-                            <Button Name="hdrNo" Content="No. v" Style="{StaticResource HeaderBtn}" ToolTip="Reset all sorts to Catalog Order"/>
+                            <Button Name="hdrNo" Content="No. v" Style="{StaticResource HeaderBtn}" ToolTip="Reset all sorts to Catalog ID order"/>
                         </GridViewColumn.Header>
                     </GridViewColumn>
 
@@ -424,21 +446,21 @@ function Get-FreeSpaceGB($driveLetter) {
                     <!-- Column 3: Title (Cycles A-Z / Z-A / Off) -->
                     <GridViewColumn Width="310" DisplayMemberBinding="{Binding Title}">
                         <GridViewColumn.Header>
-                            <Button Name="hdrTitle" Content="Title (A-Z) ^" Style="{StaticResource HeaderBtn}" Foreground="#38BDF8" ToolTip="Click to Cycle: Title (A-Z) -> Title (Z-A) -> Off"/>
+                            <Button Name="hdrTitle" Content="Title (A-Z) ^ [#1]" Style="{StaticResource HeaderBtn}" Foreground="#38BDF8" ToolTip="Click to cycle Title sort (Most recently clicked becomes [#1])"/>
                         </GridViewColumn.Header>
                     </GridViewColumn>
 
                     <!-- Column 4: Release Year -->
-                    <GridViewColumn Width="70" DisplayMemberBinding="{Binding Year}">
+                    <GridViewColumn Width="85" DisplayMemberBinding="{Binding Year}">
                         <GridViewColumn.Header>
-                            <Button Name="hdrYear" Content="Year v" Style="{StaticResource HeaderBtn}" ToolTip="Click to Cycle: Latest -> Oldest -> Off"/>
+                            <Button Name="hdrYear" Content="Year v" Style="{StaticResource HeaderBtn}" ToolTip="Click to cycle Year sort (Most recently clicked becomes [#1])"/>
                         </GridViewColumn.Header>
                     </GridViewColumn>
 
                     <!-- Column 5: Genre -->
-                    <GridViewColumn Width="205" DisplayMemberBinding="{Binding Genre}">
+                    <GridViewColumn Width="210" DisplayMemberBinding="{Binding Genre}">
                         <GridViewColumn.Header>
-                            <Button Name="hdrGenre" Content="Genre v" Style="{StaticResource HeaderBtn}" ToolTip="Click to Cycle: Genre (A-Z) -> Genre (Z-A) -> Off"/>
+                            <Button Name="hdrGenre" Content="Genre v" Style="{StaticResource HeaderBtn}" ToolTip="Click to cycle Genre sort (Most recently clicked becomes [#1])"/>
                         </GridViewColumn.Header>
                     </GridViewColumn>
 
@@ -450,9 +472,9 @@ function Get-FreeSpaceGB($driveLetter) {
                     </GridViewColumn>
 
                     <!-- Column 7: Download Size -->
-                    <GridViewColumn Width="110" DisplayMemberBinding="{Binding Size}">
+                    <GridViewColumn Width="120" DisplayMemberBinding="{Binding Size}">
                         <GridViewColumn.Header>
-                            <Button Name="hdrSize" Content="Size v" Style="{StaticResource HeaderBtn}" ToolTip="Click to Cycle: Lowest -> Highest -> Off"/>
+                            <Button Name="hdrSize" Content="Size v" Style="{StaticResource HeaderBtn}" ToolTip="Click to cycle Size sort (Most recently clicked becomes [#1])"/>
                         </GridViewColumn.Header>
                     </GridViewColumn>
 
@@ -480,7 +502,7 @@ function Get-FreeSpaceGB($driveLetter) {
         <!-- ROW 4: FOOTER STATUS -->
         <Border Grid.Row="4" Background="#060A14" CornerRadius="4" Padding="10,6" BorderBrush="#1F2937" BorderThickness="1">
             <DockPanel LastChildFill="False">
-                <TextBlock Name="lblStatus" Text="Ready" 
+                <TextBlock Name="lblStatus" Text="Ready. Default (Title A-Z)" 
                            Foreground="#94A3B8" FontSize="12" DockPanel.Dock="Left"/>
                 <TextBlock Name="lblGameCount" Text="58 Games Loaded" Foreground="#38BDF8" FontWeight="SemiBold" FontSize="12" DockPanel.Dock="Right"/>
             </DockPanel>
@@ -502,6 +524,7 @@ $btnSelectNone     = $window.FindName("btnSelectNone")
 $btnSelectInvert   = $window.FindName("btnSelectInvert")
 $lblSelectionCount = $window.FindName("lblSelectionCount")
 $btnHelp           = $window.FindName("btnHelp")
+$btnResetFilters   = $window.FindName("btnResetFilters")
 $btnDownload       = $window.FindName("btnDownload")
 $lvGames           = $window.FindName("lvGames")
 $pbDownload        = $window.FindName("pbDownload")
@@ -533,16 +556,18 @@ $brushEmerald  = [System.Windows.Media.BrushConverter]::new().ConvertFromString(
 $allCatalog = Get-Catalog
 
 # Filter & Sort States
-$consoleState      = 0   # 0 = All, 1 = PS1, 2 = PS2
-$graphicsState     = 0   # 0 = All, 1 = High, 2 = Low, 3 = 2D
-$statusFilterState = 0   # 0 = All, 1 = Available, 2 = Installed
+$script:consoleState      = 0   # 0 = All, 1 = PS1, 2 = PS2
+$script:graphicsState     = 0   # 0 = All, 1 = High, 2 = Low, 3 = 2D
+$script:statusFilterState = 0   # 0 = All, 1 = Available, 2 = Installed
 
-$titleSortState    = 1   # 1 = Title A-Z (Default Active), 2 = Title Z-A, 0 = Off
-$yearSortState     = 0   # 0 = Off, 1 = Latest (Desc), 2 = Oldest (Asc)
-$sizeSortState     = 0   # 0 = Off, 1 = Lowest (Asc), 2 = Highest (Desc)
-$genreSortState    = 0   # 0 = Off, 1 = A-Z (Asc), 2 = Z-A (Desc)
+$script:titleSortState    = 1   # 1 = Title A-Z (Default Active), 2 = Title Z-A, 0 = Off
+$script:yearSortState     = 0   # 0 = Off, 1 = Latest (Desc), 2 = Oldest (Asc)
+$script:sizeSortState     = 0   # 0 = Off, 1 = Lowest (Asc), 2 = Highest (Desc)
+$script:genreSortState    = 0   # 0 = Off, 1 = A-Z (Asc), 2 = Z-A (Desc)
 
-$sortPriority = New-Object System.Collections.Generic.List[string]
+# Most-Recently-Changed Priority Queue (All 4 sortable columns)
+$script:sortPriority = New-Object System.Collections.Generic.List[string]
+$script:sortPriority.Add("Title")
 
 $displayedModels = New-Object System.Collections.ObjectModel.ObservableCollection[RetroGameItem]
 
@@ -631,27 +656,155 @@ function Update-SelectionCount {
     }
 }
 
+function Update-HeaderLabels {
+    # 1. Title
+    if ($script:titleSortState -eq 0) {
+        $hdrTitle.Content = "Title v"
+        $hdrTitle.Foreground = $brushInactive
+    } else {
+        $rankIdx = $script:sortPriority.IndexOf("Title")
+        $rankTag = if ($rankIdx -ge 0) { " [#" + ($rankIdx + 1) + "]" } else { "" }
+        if ($script:titleSortState -eq 1) {
+            $hdrTitle.Content = "Title (A-Z) ^$rankTag"
+        } else {
+            $hdrTitle.Content = "Title (Z-A) v$rankTag"
+        }
+        $hdrTitle.Foreground = $brushActive
+    }
+
+    # 2. Year
+    if ($script:yearSortState -eq 0) {
+        $hdrYear.Content = "Year v"
+        $hdrYear.Foreground = $brushInactive
+    } else {
+        $rankIdx = $script:sortPriority.IndexOf("Year")
+        $rankTag = if ($rankIdx -ge 0) { " [#" + ($rankIdx + 1) + "]" } else { "" }
+        if ($script:yearSortState -eq 1) {
+            $hdrYear.Content = "Year (Latest) v$rankTag"
+        } else {
+            $hdrYear.Content = "Year (Oldest) ^$rankTag"
+        }
+        $hdrYear.Foreground = $brushActive
+    }
+
+    # 3. Size
+    if ($script:sizeSortState -eq 0) {
+        $hdrSize.Content = "Size v"
+        $hdrSize.Foreground = $brushInactive
+    } else {
+        $rankIdx = $script:sortPriority.IndexOf("Size")
+        $rankTag = if ($rankIdx -ge 0) { " [#" + ($rankIdx + 1) + "]" } else { "" }
+        if ($script:sizeSortState -eq 1) {
+            $hdrSize.Content = "Size (Lowest) ^$rankTag"
+        } else {
+            $hdrSize.Content = "Size (Highest) v$rankTag"
+        }
+        $hdrSize.Foreground = $brushActive
+    }
+
+    # 4. Genre
+    if ($script:genreSortState -eq 0) {
+        $hdrGenre.Content = "Genre v"
+        $hdrGenre.Foreground = $brushInactive
+    } else {
+        $rankIdx = $script:sortPriority.IndexOf("Genre")
+        $rankTag = if ($rankIdx -ge 0) { " [#" + ($rankIdx + 1) + "]" } else { "" }
+        if ($script:genreSortState -eq 1) {
+            $hdrGenre.Content = "Genre (A-Z) ^$rankTag"
+        } else {
+            $hdrGenre.Content = "Genre (Z-A) v$rankTag"
+        }
+        $hdrGenre.Foreground = $brushActive
+    }
+
+    # Console, Graphics, Status Filter Headers
+    switch ($script:consoleState) {
+        0 { $hdrConsole.Content = "Console: All [v]"; $hdrConsole.Foreground = $brushActive }
+        1 { $hdrConsole.Content = "Console: PS1 [v]"; $hdrConsole.Foreground = $brushPurple }
+        2 { $hdrConsole.Content = "Console: PS2 [v]"; $hdrConsole.Foreground = $brushGreen }
+    }
+
+    switch ($script:graphicsState) {
+        0 { $hdrGraphics.Content = "Graphics: All [v]"; $hdrGraphics.Foreground = $brushActive }
+        1 { $hdrGraphics.Content = "Graphics: High [v]"; $hdrGraphics.Foreground = $brushRose }
+        2 { $hdrGraphics.Content = "Graphics: Low [v]"; $hdrGraphics.Foreground = $brushAmber }
+        3 { $hdrGraphics.Content = "Graphics: 2D [v]"; $hdrGraphics.Foreground = $brushViolet }
+    }
+
+    switch ($script:statusFilterState) {
+        0 { $hdrStatus.Content = "Status: All [v]"; $hdrStatus.Foreground = $brushActive }
+        1 { $hdrStatus.Content = "Status: Available [v]"; $hdrStatus.Foreground = $brushInactive }
+        2 { $hdrStatus.Content = "Status: Installed [v]"; $hdrStatus.Foreground = $brushEmerald }
+    }
+}
+
+function Update-PipelineStatus {
+    $activeFilters = @()
+    if ($script:consoleState -eq 1) { $activeFilters += "Console=PS1" }
+    elseif ($script:consoleState -eq 2) { $activeFilters += "Console=PS2" }
+
+    if ($script:graphicsState -eq 1) { $activeFilters += "Graphics=High" }
+    elseif ($script:graphicsState -eq 2) { $activeFilters += "Graphics=Low" }
+    elseif ($script:graphicsState -eq 3) { $activeFilters += "Graphics=2D" }
+
+    if ($script:statusFilterState -eq 1) { $activeFilters += "Status=Available" }
+    elseif ($script:statusFilterState -eq 2) { $activeFilters += "Status=Installed" }
+
+    $searchTxt = $txtSearch.Text.Trim()
+    if (-not [string]::IsNullOrWhiteSpace($searchTxt)) {
+        $activeFilters += "Search='$searchTxt'"
+    }
+
+    $sortDescs = @()
+    for ($i = 0; $i -lt $script:sortPriority.Count; $i++) {
+        $col = $script:sortPriority[$i]
+        $rankNum = $i + 1
+        if ($col -eq "Size") {
+            $dir = if ($script:sizeSortState -eq 1) { "Lowest" } else { "Highest" }
+            $sortDescs += "#$rankNum Size ($dir)"
+        } elseif ($col -eq "Year") {
+            $dir = if ($script:yearSortState -eq 1) { "Latest" } else { "Oldest" }
+            $sortDescs += "#$rankNum Year ($dir)"
+        } elseif ($col -eq "Genre") {
+            $dir = if ($script:genreSortState -eq 1) { "A-Z" } else { "Z-A" }
+            $sortDescs += "#$rankNum Genre ($dir)"
+        } elseif ($col -eq "Title") {
+            $dir = if ($script:titleSortState -eq 1) { "A-Z" } else { "Z-A" }
+            $sortDescs += "#$rankNum Title ($dir)"
+        }
+    }
+
+    $isDefault = ($activeFilters.Count -eq 0 -and $sortDescs.Count -eq 1 -and $sortDescs[0] -eq "#1 Title (A-Z)")
+    if ($isDefault) {
+        $lblStatus.Text = "Ready. Default (Title A-Z)"
+    } else {
+        $filterPart = if ($activeFilters.Count -gt 0) { "[Filter: " + ($activeFilters -join ", ") + "]" } else { "[Filter: None]" }
+        $sortPart = if ($sortDescs.Count -gt 0) { "[Sort: " + ($sortDescs -join " -> ") + "]" } else { "[Sort: Catalog ID]" }
+        $lblStatus.Text = "Active Pipeline: $filterPart | $sortPart"
+    }
+}
+
 function Refresh-GameList {
     $search = $txtSearch.Text.Trim()
     $items = @($allCatalog)
 
     # 1. Console Filter
-    switch ($consoleState) {
+    switch ($script:consoleState) {
         1 { $items = $items | Where-Object { $_.platform -eq "PS1" } }
         2 { $items = $items | Where-Object { $_.platform -eq "PS2" } }
     }
 
     # 2. Graphics Filter
-    switch ($graphicsState) {
+    switch ($script:graphicsState) {
         1 { $items = $items | Where-Object { $_.graphics -like "*High*" } }
         2 { $items = $items | Where-Object { $_.graphics -like "*Low*" } }
         3 { $items = $items | Where-Object { $_.graphics -like "*Retro*" } }
     }
 
     # 3. Status Filter
-    if ($statusFilterState -eq 1) {
+    if ($script:statusFilterState -eq 1) {
         $items = $items | Where-Object { $null -eq (Check-GameLocation $_) }
-    } elseif ($statusFilterState -eq 2) {
+    } elseif ($script:statusFilterState -eq 2) {
         $items = $items | Where-Object { $null -ne (Check-GameLocation $_) }
     }
 
@@ -662,20 +815,37 @@ function Refresh-GameList {
         }
     }
 
-    # 5. Multi-Column Sorting
+    # 5. Coherent Multi-Tier Sorting
     $sortProps = @()
-    foreach ($col in $sortPriority) {
-        if ($col -eq "Year") {
-            $sortProps += @{ Expression = { [int]$_.year }; Descending = ($yearSortState -eq 1) }
-        } elseif ($col -eq "Genre") {
-            $sortProps += @{ Expression = { $_.genre }; Descending = ($genreSortState -eq 2) }
-        } elseif ($col -eq "Size") {
-            $sortProps += @{ Expression = { [double]$_.SizeBytes }; Descending = ($sizeSortState -eq 2) }
+    $sizeIdx = $script:sortPriority.IndexOf("Size")
+    $hasSecondaryAfterSize = $false
+    if ($sizeIdx -ge 0) {
+        for ($k = $sizeIdx + 1; $k -lt $script:sortPriority.Count; $k++) {
+            if ($script:sortPriority[$k] -eq "Year" -or $script:sortPriority[$k] -eq "Genre") {
+                $hasSecondaryAfterSize = $true
+                break
+            }
         }
     }
 
-    if ($titleSortState -ne 0) {
-        $sortProps += @{ Expression = { $_.title }; Descending = ($titleSortState -eq 2) }
+    foreach ($col in $script:sortPriority) {
+        if ($col -eq "Size") {
+            if ($hasSecondaryAfterSize) {
+                $sortProps += @{ Expression = { [int]$_.SizeTier }; Descending = ($script:sizeSortState -eq 2) }
+            } else {
+                $sortProps += @{ Expression = { [double]$_.SizeBytes }; Descending = ($script:sizeSortState -eq 2) }
+            }
+        } elseif ($col -eq "Year") {
+            $sortProps += @{ Expression = { [int]$_.year }; Descending = ($script:yearSortState -eq 1) }
+        } elseif ($col -eq "Genre") {
+            $sortProps += @{ Expression = { $_.genre }; Descending = ($script:genreSortState -eq 2) }
+        } elseif ($col -eq "Title") {
+            $sortProps += @{ Expression = { $_.title }; Descending = ($script:titleSortState -eq 2) }
+        }
+    }
+
+    if ($hasSecondaryAfterSize) {
+        $sortProps += @{ Expression = { [double]$_.SizeBytes }; Descending = ($script:sizeSortState -eq 2) }
     }
 
     if ($sortProps.Count -gt 0) {
@@ -706,6 +876,7 @@ function Refresh-GameList {
         $m.Graphics = $item.graphics
         $m.Size = $item.size
         $m.SizeBytes = $item.SizeBytes
+        $m.SizeTier = [int]$item.SizeTier
         $m.Status = $statusStr
         $m.RawItem = $item
         $m.IsSelected = $selectedIds.Contains([int]$item.id)
@@ -745,151 +916,105 @@ $lvGames.Add_MouseRightButtonUp({
 
 # 1. Reset all sorts to catalog ID order
 $hdrNo.Add_Click({
-    $global:titleSortState = 0
-    $global:yearSortState = 0
-    $global:sizeSortState = 0
-    $global:genreSortState = 0
-    $global:sortPriority.Clear()
+    $script:titleSortState = 0
+    $script:yearSortState = 0
+    $script:sizeSortState = 0
+    $script:genreSortState = 0
+    $script:sortPriority.Clear()
 
-    $hdrTitle.Content = "Title v"
-    $hdrTitle.Foreground = $brushInactive
-    $hdrYear.Content = "Year v"
-    $hdrYear.Foreground = $brushInactive
-    $hdrSize.Content = "Size v"
-    $hdrSize.Foreground = $brushInactive
-    $hdrGenre.Content = "Genre v"
-    $hdrGenre.Foreground = $brushInactive
-
+    Update-HeaderLabels
+    Update-PipelineStatus
     Refresh-GameList
 })
 
 # 2. Console Cycle (All -> PS1 -> PS2)
 $hdrConsole.Add_Click({
-    $global:consoleState = ($global:consoleState + 1) % 3
-    switch ($global:consoleState) {
-        0 { $hdrConsole.Content = "Console: All [v]"; $hdrConsole.Foreground = $brushActive }
-        1 { $hdrConsole.Content = "Console: PS1 [v]"; $hdrConsole.Foreground = $brushPurple }
-        2 { $hdrConsole.Content = "Console: PS2 [v]"; $hdrConsole.Foreground = $brushGreen }
-    }
+    $script:consoleState = ($script:consoleState + 1) % 3
+    Update-HeaderLabels
+    Update-PipelineStatus
     Refresh-GameList
 })
 
 # 3. Title Sort Cycle (1 = A-Z -> 2 = Z-A -> 0 = Off -> 1 = A-Z)
 $hdrTitle.Add_Click({
-    if ($global:titleSortState -eq 1) {
-        $global:titleSortState = 2
-    } elseif ($global:titleSortState -eq 2) {
-        $global:titleSortState = 0
+    if ($script:titleSortState -eq 1) {
+        $script:titleSortState = 2
+    } elseif ($script:titleSortState -eq 2) {
+        $script:titleSortState = 0
     } else {
-        $global:titleSortState = 1
+        $script:titleSortState = 1
     }
 
-    switch ($global:titleSortState) {
-        1 {
-            $hdrTitle.Content = "Title (A-Z) ^"
-            $hdrTitle.Foreground = $brushActive
-        }
-        2 {
-            $hdrTitle.Content = "Title (Z-A) v"
-            $hdrTitle.Foreground = $brushActive
-        }
-        0 {
-            $hdrTitle.Content = "Title v"
-            $hdrTitle.Foreground = $brushInactive
-        }
+    if ($script:titleSortState -ne 0) {
+        [void]$script:sortPriority.Remove("Title")
+        $script:sortPriority.Insert(0, "Title")
+    } else {
+        [void]$script:sortPriority.Remove("Title")
     }
+
+    Update-HeaderLabels
+    Update-PipelineStatus
     Refresh-GameList
 })
 
 # 4. Release Year Sort Cycle (0 = Off -> 1 = Latest -> 2 = Oldest -> 0 = Off)
 $hdrYear.Add_Click({
-    $global:yearSortState = ($global:yearSortState + 1) % 3
-    switch ($global:yearSortState) {
-        0 {
-            $hdrYear.Content = "Year v"
-            $hdrYear.Foreground = $brushInactive
-            [void]$global:sortPriority.Remove("Year")
-        }
-        1 {
-            $hdrYear.Content = "Year (Latest) v"
-            $hdrYear.Foreground = $brushActive
-            if (-not $global:sortPriority.Contains("Year")) { $global:sortPriority.Add("Year") }
-        }
-        2 {
-            $hdrYear.Content = "Year (Oldest) ^"
-            $hdrYear.Foreground = $brushActive
-            if (-not $global:sortPriority.Contains("Year")) { $global:sortPriority.Add("Year") }
-        }
+    $script:yearSortState = ($script:yearSortState + 1) % 3
+    if ($script:yearSortState -ne 0) {
+        [void]$script:sortPriority.Remove("Year")
+        $script:sortPriority.Insert(0, "Year")
+    } else {
+        [void]$script:sortPriority.Remove("Year")
     }
+
+    Update-HeaderLabels
+    Update-PipelineStatus
     Refresh-GameList
 })
 
 # 5. Genre Sort Cycle (0 = Off -> 1 = A-Z -> 2 = Z-A -> 0 = Off)
 $hdrGenre.Add_Click({
-    $global:genreSortState = ($global:genreSortState + 1) % 3
-    switch ($global:genreSortState) {
-        0 {
-            $hdrGenre.Content = "Genre v"
-            $hdrGenre.Foreground = $brushInactive
-            [void]$global:sortPriority.Remove("Genre")
-        }
-        1 {
-            $hdrGenre.Content = "Genre (A-Z) ^"
-            $hdrGenre.Foreground = $brushActive
-            if (-not $global:sortPriority.Contains("Genre")) { $global:sortPriority.Add("Genre") }
-        }
-        2 {
-            $hdrGenre.Content = "Genre (Z-A) v"
-            $hdrGenre.Foreground = $brushActive
-            if (-not $global:sortPriority.Contains("Genre")) { $global:sortPriority.Add("Genre") }
-        }
+    $script:genreSortState = ($script:genreSortState + 1) % 3
+    if ($script:genreSortState -ne 0) {
+        [void]$script:sortPriority.Remove("Genre")
+        $script:sortPriority.Insert(0, "Genre")
+    } else {
+        [void]$script:sortPriority.Remove("Genre")
     }
+
+    Update-HeaderLabels
+    Update-PipelineStatus
     Refresh-GameList
 })
 
 # 6. Graphics Filter Cycle (All -> High -> Low -> 2D)
 $hdrGraphics.Add_Click({
-    $global:graphicsState = ($global:graphicsState + 1) % 4
-    switch ($global:graphicsState) {
-        0 { $hdrGraphics.Content = "Graphics: All [v]"; $hdrGraphics.Foreground = $brushActive }
-        1 { $hdrGraphics.Content = "Graphics: High [v]"; $hdrGraphics.Foreground = $brushRose }
-        2 { $hdrGraphics.Content = "Graphics: Low [v]"; $hdrGraphics.Foreground = $brushAmber }
-        3 { $hdrGraphics.Content = "Graphics: 2D [v]"; $hdrGraphics.Foreground = $brushViolet }
-    }
+    $script:graphicsState = ($script:graphicsState + 1) % 4
+    Update-HeaderLabels
+    Update-PipelineStatus
     Refresh-GameList
 })
 
 # 7. Size Sort Cycle (0 = Off -> 1 = Lowest -> 2 = Highest -> 0 = Off)
 $hdrSize.Add_Click({
-    $global:sizeSortState = ($global:sizeSortState + 1) % 3
-    switch ($global:sizeSortState) {
-        0 {
-            $hdrSize.Content = "Size v"
-            $hdrSize.Foreground = $brushInactive
-            [void]$global:sortPriority.Remove("Size")
-        }
-        1 {
-            $hdrSize.Content = "Size (Lowest) ^"
-            $hdrSize.Foreground = $brushActive
-            if (-not $global:sortPriority.Contains("Size")) { $global:sortPriority.Add("Size") }
-        }
-        2 {
-            $hdrSize.Content = "Size (Highest) v"
-            $hdrSize.Foreground = $brushActive
-            if (-not $global:sortPriority.Contains("Size")) { $global:sortPriority.Add("Size") }
-        }
+    $script:sizeSortState = ($script:sizeSortState + 1) % 3
+    if ($script:sizeSortState -ne 0) {
+        [void]$script:sortPriority.Remove("Size")
+        $script:sortPriority.Insert(0, "Size")
+    } else {
+        [void]$script:sortPriority.Remove("Size")
     }
+
+    Update-HeaderLabels
+    Update-PipelineStatus
     Refresh-GameList
 })
 
 # 8. Status Filter Cycle (All -> Available -> Installed)
 $hdrStatus.Add_Click({
-    $global:statusFilterState = ($global:statusFilterState + 1) % 3
-    switch ($global:statusFilterState) {
-        0 { $hdrStatus.Content = "Status: All [v]"; $hdrStatus.Foreground = $brushActive }
-        1 { $hdrStatus.Content = "Status: Available [v]"; $hdrStatus.Foreground = $brushInactive }
-        2 { $hdrStatus.Content = "Status: Installed [v]"; $hdrStatus.Foreground = $brushEmerald }
-    }
+    $script:statusFilterState = ($script:statusFilterState + 1) % 3
+    Update-HeaderLabels
+    Update-PipelineStatus
     Refresh-GameList
 })
 
@@ -909,6 +1034,30 @@ $btnSelectInvert.Add_Click({
     Update-SelectionCount
 })
 
+# --- Dedicated Reset All Filters and Sorts Button ---
+function Reset-AllFiltersAndSorts {
+    $script:consoleState = 0
+    $script:graphicsState = 0
+    $script:statusFilterState = 0
+    $txtSearch.Text = ""
+
+    $script:yearSortState = 0
+    $script:sizeSortState = 0
+    $script:genreSortState = 0
+    $script:titleSortState = 1
+
+    $script:sortPriority.Clear()
+    $script:sortPriority.Add("Title")
+
+    Update-HeaderLabels
+    Refresh-GameList
+    $lblStatus.Text = "All filters and sorting reset to default."
+}
+
+$btnResetFilters.Add_Click({
+    Reset-AllFiltersAndSorts
+})
+
 # --- Help Button [?] Dialog ---
 $btnHelp.Add_Click({
     $helpLines = @(
@@ -916,11 +1065,13 @@ $btnHelp.Add_Click({
         "- Click checkboxes, left-click, or right-click any row to multi-select games without holding Ctrl.",
         "- Use 'All', 'None', or 'Invert' buttons to quickly manage selections.",
         "",
-        "=== INTERLINKED FILTERS & MULTI-SORTING ===",
-        "- Filters: Click 'Console', 'Graphics', or 'Status' headers to combine filters with search.",
-        "- Multi-Sorting: Click 'Year', 'Size', 'Genre', and 'Title' headers to combine multi-level sorting.",
-        "- Sort Cycle: Each sort column cycles (e.g., A-Z -> Z-A -> Off). Active sorts are highlighted in cyan.",
-        "- Reset Sorts: Click 'No. v' to reset all sorts back to catalog order.",
+        "=== MOST-RECENTLY-CHANGED MULTI-SORTING ===",
+        "- Whichever sort header you click immediately becomes Priority [#1].",
+        "- Previously active sorts shift to [#2], [#3], etc. and remain active as tie-breakers.",
+        "- Cycle: Click a sort header until it returns to default ('v') to turn that sort off.",
+        "- Size-Tier Cohesion: When Size is [#1] and Year/Genre is [#2], games group into size tiers (<500MB, 500MB-1GB, 1GB-2GB, 2GB-3.5GB, >3.5GB) and order by your secondary criteria.",
+        "- Reset Filters: Click 'Reset Filters' in Row 1 to instantly restore default view (Title A-Z).",
+        "- Catalog ID Reset: Click 'No. v' to sort strictly by original catalog ID.",
         "",
         "=== STORAGE & BIOS ===",
         "- Toggle between HDD and SSD storage targets at the top.",
@@ -933,6 +1084,7 @@ $btnHelp.Add_Click({
 })
 
 $txtSearch.Add_TextChanged({
+    Update-PipelineStatus
     Refresh-GameList
 })
 
@@ -1039,6 +1191,8 @@ $btnDownload.Add_Click({
 
 # Initial Bind
 Refresh-StorageLabels
+Update-HeaderLabels
+Update-PipelineStatus
 Refresh-GameList
 
 # Launch Window

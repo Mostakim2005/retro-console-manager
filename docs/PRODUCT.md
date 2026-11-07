@@ -23,12 +23,19 @@
 * **Code Anchors (Grep Targets):**
   * `retro-console-manager.ps1` -> `RetroGameItem`, `IsSelected`, `Update-SelectionCount`, `btnSelectAll`, `btnSelectNone`, `btnSelectInvert`
 
-### [FEATURE: Interlinked-Filter-And-Multi-Sort] | Aliases: column sort, multi sort, console filter, graphics filter, search
-> **1-Line Summary:** Combinable multi-criteria filtering coupled with a priority queue multi-column sorter with live visual state highlighting.
-* **User Intention (Non-Negotiable):** Users should be able to filter by console (PS1/PS2), graphics style (High/Low/2D), and search keywords while simultaneously sorting by multiple columns (e.g., Year descending then Title ascending) without resetting filters.
-* **Visual / UI Behavior:** Column headers cycle states upon clicking. Active sort headers highlight in cyan (`#38BDF8`), and `No. v` resets all sorts back to original catalog ID.
+### [FEATURE: Interlinked-Filter-And-Multi-Sort] | Aliases: column sort, multi sort, console filter, graphics filter, search, priority queue
+> **1-Line Summary:** Most-Recently-Changed Priority Queue (`[#1]`, `[#2]`, `[#3]`) multi-sorting engine with size-tier grouping and combinable multi-criteria filtering.
+* **User Intention (Non-Negotiable):** Users should be able to filter by console (PS1/PS2), graphics style (High/Low/2D), and search keywords while simultaneously sorting by multiple columns in whatever order they click. The most recently changed sort column must immediately become Priority `#1`, and Size + Year multi-sorting must group by size tier so secondary sorts remain coherent.
+* **Visual / UI Behavior:** Column headers cycle states upon clicking and dynamically display their active priority rank in cyan (`#38BDF8`), e.g., `Year (Latest) v [#1]`, `Size (Lowest) ^ [#2]`. A real-time plain-English summary of the active filter and sort pipeline is displayed in the status footer.
 * **Code Anchors (Grep Targets):**
-  * `retro-console-manager.ps1` -> `Refresh-GameList`, `$sortPriority`, `hdrConsole`, `hdrGraphics`, `hdrStatus`, `hdrYear`, `hdrSize`, `hdrGenre`, `hdrTitle`, `hdrNo`
+  * `retro-console-manager.ps1` -> `Refresh-GameList`, `Update-HeaderLabels`, `Update-PipelineStatus`, `$script:sortPriority`, `SizeTier`, `hdrConsole`, `hdrGraphics`, `hdrStatus`, `hdrYear`, `hdrSize`, `hdrGenre`, `hdrTitle`, `hdrNo`
+
+### [FEATURE: Dedicated-Reset-Filters-Button] | Aliases: reset filters, clear search, default view
+> **1-Line Summary:** Single-click action button in Row 1 instantly restoring all filters, search input, and multi-column sorting back to initial defaults.
+* **User Intention (Non-Negotiable):** Provide an effortless way to return to the full catalog view without having to manually uncheck multiple filter dropdowns or cycle through 4 separate column headers.
+* **Visual / UI Behavior:** Compact slate button (`Reset Filters`) situated in the Row 1 action bar right next to the Help `[?]` button. Clicking it resets console to All, graphics to All, status to All, clears search text, and restores `Title (A-Z) [#1]`.
+* **Code Anchors (Grep Targets):**
+  * `retro-console-manager.ps1` -> `btnResetFilters`, `Reset-AllFiltersAndSorts`
 
 ### [FEATURE: Real-Time-Download-Engine] | Aliases: game download, download progress, extract archive, speed meter
 > **1-Line Summary:** Multi-threaded web downloader with real-time progress percentages, speed meter (MB/s), duplicate checking, and automatic `.zip` extraction.

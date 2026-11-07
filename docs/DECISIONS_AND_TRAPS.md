@@ -55,29 +55,29 @@ flowchart LR
 
 ---
 
-### [DECISION: Interlinked-Priority-Multi-Sort] | Aliases: combinable sorting, multi-sort, priority queue
-> **1-Line Summary:** Upgraded mutually exclusive single-column sorting into a dynamic priority-queue multi-sort engine that keeps user click order intact.
+### [DECISION: Interlinked-Priority-Multi-Sort] | Aliases: combinable sorting, multi-sort, priority queue, most recently changed
+> **1-Line Summary:** Upgraded sorting into a Most-Recently-Changed Priority Queue (`[#1]`, `[#2]`) with Size-Tier grouping solving raw-byte collisions.
 * **Decision Maker:** `[DECIDED BY: HUMAN]`
-* **Original User Intention:** Combine sorts across Year, Size, Genre, and Title without clicking one column resetting another.
+* **Original User Intention:** Combine sorts across Year, Size, Genre, and Title seamlessly, with whichever column was clicked last commanding Priority `#1`, while keeping secondary sorts like Year active when sorting by Size.
 * **Options Considered:**
-  * **Option A (Rejected - Mutually Exclusive Sorting):** Clicking Year reset Genre, Title, and Size to default. Users could only sort by a single property at any given time.
-  * **Option B (Chosen - Priority Queue Array):** Dynamic `$sortPriority` list tracks active sort columns in order of clicks. Generates composite `Sort-Object -Property @(sortProps)` expressions and highlights active headers in cyan (`#38BDF8`).
+  * **Option A (Rejected - Mutually Exclusive Sorting & Raw-Byte Collisions):** Clicking a column wiped other sorts. When simple multi-sorting was introduced, sorting by exact `SizeBytes` first left zero ties for secondary columns (like Year) because almost every game had a unique byte count (e.g. 310 MB vs. 320 MB).
+  * **Option B (Chosen - Most-Recently-Changed Queue with Size-Tier Grouping):** Clicking any sortable header moves it to index 0 of `$script:sortPriority`, instantly promoting it to Priority `#1`. When Size is placed above Year or Genre, games are grouped into 5 Size Tiers (<500MB, 500MB-1GB, 1GB-2GB, 2GB-3.5GB, >=3.5GB), ordered by the secondary criteria (Year/Genre), and finally refined by exact `SizeBytes`.
 * **Visual Pivot Map (What Failed vs. What Works):**
 
 ```mermaid
 flowchart LR
-    subgraph Failed["❌ Old Approach (Mutually Exclusive)"]
-        A1["Click 'Year'"] --> A2["Wipes Genre & Title Sorts"]
-        A2 --> A3["Only 1 Sort Column Allowed"]
+    subgraph Failed["❌ Old Approach (Raw Bytes & Static Order)"]
+        A1["Sort by Exact SizeBytes"] --> A2["Unique byte counts leave 0 ties"]
+        A2 --> A3["Secondary Year/Genre sort never executes"]
     end
-    subgraph Active["✅ Current Approach (Priority Multi-Sort)"]
-        B1["Click 'Year', then 'Genre'"] --> B2["Appends to $sortPriority Queue"]
-        B2 --> B3["Sorts by Year, then Genre, then Title"]
+    subgraph Active["✅ Current Approach (Size-Tier + Priority Queue)"]
+        B1["User clicks Year, then Size"] --> B2["Size promoted to #1, Year to #2"]
+        B2 --> B3["Groups into Size Tiers & sorts by Year inside tier"]
     end
 ```
 
 * **Code Anchors (Grep Targets):**
-  * `retro-console-manager.ps1` -> `$sortPriority`, `Refresh-GameList`, `hdrNo`
+  * `retro-console-manager.ps1` -> `$script:sortPriority`, `Update-HeaderLabels`, `SizeTier`, `Refresh-GameList`, `btnResetFilters`
 
 ---
 

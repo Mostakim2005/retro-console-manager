@@ -17,7 +17,9 @@ Built purely with **PowerShell 5.1+**, **WPF XAML**, and **compiled in-memory C#
   - **Graphics Filter:** Cycle between All, High (Realistic 3D), Low (Stylized 3D), and Retro (2D).
   - **Status Filter:** Cycle between All, Available, and Installed.
   - **Live Search:** Instant keyword searching across game title, genre, and console.
-  - **Combinable Multi-Sorting:** Click `Year`, `Size`, `Genre`, and `Title` headers in any sequence. Active sorts dynamically highlight in cyan (`#38BDF8`), while `No. v` acts as a master reset to catalog order.
+  - **Most-Recently-Changed Multi-Sorting:** Click `Year`, `Size`, `Genre`, and `Title` headers in any sequence. Whichever column was clicked last automatically becomes Priority `[#1]`, with earlier choices shifting to `[#2]`, `[#3]`. Active sorts dynamically highlight in cyan (`#38BDF8`).
+  - **Coherent Size-Tier Grouping:** Solves raw-byte tie collisions by grouping games into 5 size tiers (<500MB, 500MB-1GB, 1GB-2GB, 2GB-3.5GB, >=3.5GB) so secondary criteria (like Year or Genre) execute reliably within each tier.
+  - **1-Click Reset Filters:** Dedicated `Reset Filters` button in Row 1 instantly restoring all filters, search input, and sorting back to default (`Title A-Z [#1]`). `No. v` provides a dedicated reset back to original catalog ID.
 - **Frictionless Multi-Select:**
   - Click checkboxes, left-click, or right-click anywhere on a row to multi-select games without needing to hold `Ctrl`.
   - Quick action buttons: **All**, **None**, and **Invert**.

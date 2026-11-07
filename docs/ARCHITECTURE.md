@@ -59,10 +59,11 @@ flowchart TB
 
 ## 3. Core Subsystems & Engineering Mechanics
 
-### [SUBSYSTEM: Priority-Queue-Multi-Sorting] | Aliases: multi sort, sort priority, column sorting
-> **1-Line Summary:** Dynamic multi-column sorting engine maintaining user click order across Year, Genre, Size, and Title.
+### [SUBSYSTEM: Priority-Queue-Multi-Sorting] | Aliases: multi sort, sort priority, column sorting, size tier grouping
+> **1-Line Summary:** Most-Recently-Changed dynamic priority queue (`[#1]`, `[#2]`, `[#3]`) and Size-Tier multi-sort engine.
 
-* **How It Works (Plain English):** Rather than resetting all other sorts when a header is clicked, the application records non-zero sort columns into an ordered `$sortPriority` list (`Year`, `Genre`, `Size`). When sorting, PowerShell iterates through the priority list to build an array of `Sort-Object` expression hashtables, appending the Title sort at the end for ties.
+* **How It Works (Plain English):** All 4 sortable columns (`Size`, `Year`, `Genre`, `Title`) participate in an ordered `$script:sortPriority` queue. Under the **Most-Recently-Changed rule**, clicking ANY sortable header removes it from its current position and inserts it at index 0, guaranteeing that whichever column the user just adjusted instantly commands Priority `#1` while earlier sort choices shift down to `#2`, `#3`, etc.
+* **Solving the Raw-Byte Tie Problem (Size Tier Grouping):** When sorting by exact file sizes, almost every game has a unique byte count (e.g., 310 MB vs. 320 MB), which previously left zero ties for secondary sorts like Year or Genre to organize. When Size is placed above Year or Genre in the priority queue, the engine groups games by `SizeTier` (1 = <500MB, 2 = 500MB-1GB, 3 = 1GB-2GB, 4 = 2GB-3.5GB, 5 = >=3.5GB), applies the secondary sort (e.g. Year) inside that tier, and finally orders by exact `SizeBytes`.
 * **Data Flow Diagram:**
 
 ```mermaid
@@ -70,27 +71,28 @@ sequenceDiagram
     autonumber
     actor User
     participant Header as Column Header Button
-    participant State as Sort States & Priority List
-    participant Sorter as Multi-Sort Generator
+    participant Queue as Priority Queue ($script:sortPriority)
+    participant Labels as Update-HeaderLabels & Status
+    participant Sorter as Multi-Tier Sort Engine
     participant UI as ListView Viewport
 
-    User->>Header: Click "Year" header
-    Header->>State: Toggle Year (0 -> 1 -> 2 -> 0)
-    alt Year is Active (1 or 2)
-        State->>State: Add "Year" to $sortPriority if missing
-        Header->>Header: Highlight Foreground = #38BDF8 (Cyan)
-    else Year is Off (0)
-        State->>State: Remove "Year" from $sortPriority
-        Header->>Header: Reset Foreground = #94A3B8 (Slate)
+    User->>Header: Click "Year" header (cycle state 0 -> 1 -> 2 -> 0)
+    alt New State is Active (-ne 0)
+        Header->>Queue: Remove "Year" if present, then Insert(0, "Year")
+        Note over Queue: "Year" becomes Priority #1; other active sorts shift down
+    else New State is Off (0)
+        Header->>Queue: Remove "Year" from queue
     end
+    Header->>Labels: Call Update-HeaderLabels & Update-PipelineStatus
+    Labels->>Header: Assign rank tags ([#1], [#2]) & cyan active color
+    Labels->>UI: Update status bar with plain-English pipeline summary
     Header->>Sorter: Trigger Refresh-GameList
-    Sorter->>State: Read $sortPriority and $titleSortState
-    Sorter->>Sorter: Construct @(sortProps) array
-    Sorter->>UI: Bind sorted ObservableCollection
+    Sorter->>Sorter: Evaluate SizeTier vs. secondary ties & build sortProps
+    Sorter->>UI: Bind sorted ObservableCollection to ListView
 ```
 
 * **Code Anchors (Grep Targets):**
-  * `retro-console-manager.ps1` -> `$sortPriority`, `$yearSortState`, `$genreSortState`, `$sizeSortState`, `$titleSortState`, `Refresh-GameList`
+  * `retro-console-manager.ps1` -> `$script:sortPriority`, `Update-HeaderLabels`, `Update-PipelineStatus`, `SizeTier`, `Refresh-GameList`
 
 ---
 
