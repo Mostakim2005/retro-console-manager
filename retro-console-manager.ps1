@@ -194,6 +194,24 @@ function Get-FreeSpaceGB($driveLetter) {
     return 0
 }
 
+# Ensure TLS 1.2 and TLS 1.3 are enabled on PowerShell 5.1 / Core
+try {
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls13
+} catch {}
+
+function Open-UrlInBrowser([string]$url) {
+    if ([string]::IsNullOrWhiteSpace($url)) { return }
+    try {
+        [System.Diagnostics.Process]::Start($url) | Out-Null
+    } catch {
+        try {
+            Start-Process "cmd.exe" -ArgumentList "/c start `"`" `"$url`"" -WindowStyle Hidden
+        } catch {
+            [System.Windows.MessageBox]::Show("Could not open browser for URL:`n$url`n`nError: $($_.Exception.Message)", "Browser Error", "OK", "Warning")
+        }
+    }
+}
+
 # --- XAML User Interface Layout ---
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -402,10 +420,13 @@ function Get-FreeSpaceGB($driveLetter) {
                             ToolTip="Reset all filters, search text, and sorting back to default"/>
                 </StackPanel>
 
-                <!-- Right: Download Selected Games Button + Open BIOS Folder -->
+                <!-- Right: Download Selected Games Button + Open in Browser Button + Open BIOS Folder -->
                 <Button Name="btnDownload" Content="Download Selected Games" DockPanel.Dock="Right" 
-                        Background="#10B981" Foreground="#0F172A" FontWeight="Bold" FontSize="13" Padding="20,7" Cursor="Hand"/>
-                <Button Name="btnBios" Content="Open BIOS Folder" DockPanel.Dock="Right" Margin="0,0,10,0" Padding="14,6" Background="#1E293B" VerticalAlignment="Center"/>
+                        Background="#10B981" Foreground="#0F172A" FontWeight="Bold" FontSize="13" Padding="16,7" Cursor="Hand"/>
+                <Button Name="btnOpenBrowser" Content="Open in Browser" DockPanel.Dock="Right" Margin="0,0,8,0" 
+                        Background="#2563EB" Foreground="#FFFFFF" FontWeight="Bold" FontSize="13" Padding="16,7" Cursor="Hand"
+                        ToolTip="Open download links for selected games directly in your default web browser for manual download"/>
+                <Button Name="btnBios" Content="Open BIOS Folder" DockPanel.Dock="Right" Margin="0,0,8,0" Padding="14,6" Background="#1E293B" VerticalAlignment="Center"/>
             </DockPanel>
         </Border>
 
@@ -415,6 +436,15 @@ function Get-FreeSpaceGB($driveLetter) {
                   VirtualizingStackPanel.IsVirtualizing="False"
                   ScrollViewer.HorizontalScrollBarVisibility="Auto"
                   ScrollViewer.VerticalScrollBarVisibility="Auto">
+            <ListView.ContextMenu>
+                <ContextMenu Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155">
+                    <MenuItem Name="cmOpenBrowser" Header="Open Download Link in Browser" FontWeight="Bold"/>
+                    <MenuItem Name="cmOpenDetails" Header="Open Archive.org Details Page"/>
+                    <Separator Background="#334155"/>
+                    <MenuItem Name="cmCopyUrl" Header="Copy Download URL"/>
+                    <MenuItem Name="cmOpenFolder" Header="Open Local Game Folder"/>
+                </ContextMenu>
+            </ListView.ContextMenu>
             <ListView.View>
                 <GridView>
                     <!-- Column 0: CheckBox Column -->
@@ -526,6 +556,11 @@ $lblSelectionCount = $window.FindName("lblSelectionCount")
 $btnHelp           = $window.FindName("btnHelp")
 $btnResetFilters   = $window.FindName("btnResetFilters")
 $btnDownload       = $window.FindName("btnDownload")
+$btnOpenBrowser    = $window.FindName("btnOpenBrowser")
+$cmOpenBrowser     = $window.FindName("cmOpenBrowser")
+$cmOpenDetails     = $window.FindName("cmOpenDetails")
+$cmCopyUrl         = $window.FindName("cmCopyUrl")
+$cmOpenFolder      = $window.FindName("cmOpenFolder")
 $lvGames           = $window.FindName("lvGames")
 $pbDownload        = $window.FindName("pbDownload")
 $lblProgress       = $window.FindName("lblProgress")
@@ -647,12 +682,24 @@ function Update-SelectionCount {
     if ($count -eq 0) {
         $btnDownload.Content = "Download Selected Games"
         $btnDownload.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#10B981")
+        if ($btnOpenBrowser) {
+            $btnOpenBrowser.Content = "Open in Browser"
+            $btnOpenBrowser.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2563EB")
+        }
     } elseif ($count -eq 1) {
         $btnDownload.Content = "Download 1 Game"
         $btnDownload.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#059669")
+        if ($btnOpenBrowser) {
+            $btnOpenBrowser.Content = "Open 1 in Browser"
+            $btnOpenBrowser.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2563EB")
+        }
     } else {
         $btnDownload.Content = "Download $count Games (Batch)"
         $btnDownload.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#059669")
+        if ($btnOpenBrowser) {
+            $btnOpenBrowser.Content = "Open $count in Browser"
+            $btnOpenBrowser.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2563EB")
+        }
     }
 }
 
@@ -897,7 +944,7 @@ function Refresh-GameList {
     Update-SelectionCount
 }
 
-# --- Event: Mouse Right-Click to Toggle Selection on Any Row ---
+# --- Event: Mouse Right-Click to Select Item & Open Context Menu ---
 $lvGames.Add_MouseRightButtonUp({
     param($sender, $e)
     $hit = [System.Windows.Media.VisualTreeHelper]::GetParent($e.OriginalSource)
@@ -907,8 +954,84 @@ $lvGames.Add_MouseRightButtonUp({
     if ($null -ne $hit -and ($hit -is [System.Windows.Controls.ListViewItem])) {
         $model = $hit.DataContext
         if ($model -is [RetroGameItem]) {
+            $lvGames.SelectedItem = $model
             $model.IsSelected = -not $model.IsSelected
         }
+    }
+})
+
+# --- Event: Mouse Double-Click to Open in Browser or File Explorer ---
+$lvGames.Add_MouseDoubleClick({
+    param($sender, $e)
+    $hit = [System.Windows.Media.VisualTreeHelper]::GetParent($e.OriginalSource)
+    while ($null -ne $hit -and -not ($hit -is [System.Windows.Controls.ListViewItem])) {
+        $hit = [System.Windows.Media.VisualTreeHelper]::GetParent($hit)
+    }
+    if ($null -ne $hit -and ($hit -is [System.Windows.Controls.ListViewItem])) {
+        $model = $hit.DataContext
+        if ($model -is [RetroGameItem] -and $null -ne $model.RawItem) {
+            $item = $model.RawItem
+            $loc = Check-GameLocation $item
+            if ($null -ne $loc) {
+                $targetObj = if ($loc -eq "HDD") { $script:storageList[0] } else { $script:storageList[1] }
+                $subDir = if ($item.platform -eq "PS1") { "PS1" } else { "PS2" }
+                $destFolder = Join-Path $targetObj.Path $subDir
+                if (Test-Path $destFolder) { Invoke-Item $destFolder }
+                $lblStatus.Text = "Opened installed folder for '$($item.title)' on $loc."
+            } else {
+                Open-UrlInBrowser $item.url
+                $lblStatus.Text = "Opened download link for '$($item.title)' in browser."
+            }
+        }
+    }
+})
+
+# --- Context Menu Event Wiring ---
+$cmOpenBrowser.Add_Click({
+    $item = if ($lvGames.SelectedItem -is [RetroGameItem]) { $lvGames.SelectedItem.RawItem } else { $null }
+    if ($item -and $item.url) {
+        Open-UrlInBrowser $item.url
+        $lblStatus.Text = "Opened download link for '$($item.title)' in browser."
+    }
+})
+
+$cmOpenDetails.Add_Click({
+    $item = if ($lvGames.SelectedItem -is [RetroGameItem]) { $lvGames.SelectedItem.RawItem } else { $null }
+    if ($item -and $item.url) {
+        $detailsUrl = $item.url
+        if ($detailsUrl -like "*archive.org/download/*") {
+            $parts = $detailsUrl -replace "https://archive.org/download/", ""
+            $itemId = $parts.Split('/')[0]
+            $detailsUrl = "https://archive.org/details/$itemId"
+        }
+        Open-UrlInBrowser $detailsUrl
+        $lblStatus.Text = "Opened Archive.org details page for '$($item.title)' in browser."
+    }
+})
+
+$cmCopyUrl.Add_Click({
+    $item = if ($lvGames.SelectedItem -is [RetroGameItem]) { $lvGames.SelectedItem.RawItem } else { $null }
+    if ($item -and $item.url) {
+        try {
+            [System.Windows.Clipboard]::SetText($item.url)
+            $lblStatus.Text = "Copied download URL for '$($item.title)' to clipboard."
+        } catch {
+            $lblStatus.Text = "Failed to copy URL to clipboard."
+        }
+    }
+})
+
+$cmOpenFolder.Add_Click({
+    $item = if ($lvGames.SelectedItem -is [RetroGameItem]) { $lvGames.SelectedItem.RawItem } else { $null }
+    if ($item) {
+        $targetObj = if ($rbHDD.IsChecked) { $script:storageList[0] } else { $script:storageList[1] }
+        $subDir = if ($item.platform -eq "PS1") { "PS1" } else { "PS2" }
+        $destFolder = Join-Path $targetObj.Path $subDir
+        if (-not (Test-Path $destFolder)) {
+            try { New-Item -ItemType Directory -Path $destFolder -Force | Out-Null } catch {}
+        }
+        Invoke-Item $destFolder
+        $lblStatus.Text = "Opened storage folder for '$($item.title)'."
     }
 })
 
@@ -1061,9 +1184,13 @@ $btnResetFilters.Add_Click({
 # --- Help Button [?] Dialog ---
 $btnHelp.Add_Click({
     $helpLines = @(
-        "=== MULTI-SELECT CONTROLS ===",
-        "- Click checkboxes, left-click, or right-click any row to multi-select games without holding Ctrl.",
+        "=== MULTI-SELECT & BROWSER CONTROLS ===",
+        "- Click checkboxes or click any row to multi-select games without holding Ctrl.",
         "- Use 'All', 'None', or 'Invert' buttons to quickly manage selections.",
+        "- In-App Download: Click 'Download Selected Games' to download directly through the app.",
+        "- Browser Manual Download: Click 'Open in Browser' to open download links in your default web browser (recommended if Archive.org blocks scripts or asks for login).",
+        "- Double-Click: Double-click any game row to open its download link in browser (or open its folder if installed).",
+        "- Right-Click: Right-click any row to view actions: Open in Browser, Open Archive Details, Copy URL, or Open Folder.",
         "",
         "=== MOST-RECENTLY-CHANGED MULTI-SORTING ===",
         "- Whichever sort header you click immediately becomes Priority [#1].",
@@ -1095,6 +1222,36 @@ $btnBios.Add_Click({
     Invoke-Item $p
 })
 
+# --- Open Selected Games in Web Browser ---
+$btnOpenBrowser.Add_Click({
+    $selectedModels = Get-SelectedGames
+    if ($selectedModels.Count -eq 0) {
+        if ($lvGames.SelectedItem -is [RetroGameItem]) {
+            $selectedModels = @($lvGames.SelectedItem)
+        }
+    }
+
+    if ($selectedModels.Count -eq 0) {
+        [System.Windows.MessageBox]::Show("Please click checkboxes or a row to select games to open in your browser!", "No Games Selected", "OK", "Information")
+        return
+    }
+
+    if ($selectedModels.Count -gt 5) {
+        $confirm = [System.Windows.MessageBox]::Show("You selected $($selectedModels.Count) games. Are you sure you want to open $($selectedModels.Count) browser tabs at once?", "Confirm Multiple Tabs", "YesNo", "Question")
+        if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) {
+            return
+        }
+    }
+
+    foreach ($m in $selectedModels) {
+        $item = $m.RawItem
+        if ($item -and $item.url) {
+            Open-UrlInBrowser $item.url
+        }
+    }
+    $lblStatus.Text = "Opened $($selectedModels.Count) download link(s) in your default web browser."
+})
+
 # --- Batch / Single Download ---
 $btnDownload.Add_Click({
     $selectedModels = Get-SelectedGames
@@ -1103,11 +1260,18 @@ $btnDownload.Add_Click({
         return
     }
 
+    # Ensure modern TLS 1.2 / TLS 1.3 is active
+    try {
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls13
+    } catch {}
+
     $targetObj = if ($rbHDD.IsChecked) { $script:storageList[0] } else { $script:storageList[1] }
     $btnDownload.IsEnabled = $false
+    $btnOpenBrowser.IsEnabled = $false
     $totalQueue = $selectedModels.Count
     $completedCount = 0
     $skippedCount = 0
+    $failedItems = @()
 
     for ($idx = 0; $idx -lt $totalQueue; $idx++) {
         $model = $selectedModels[$idx]
@@ -1118,23 +1282,31 @@ $btnDownload.Add_Click({
         if ($null -ne $existingLoc) {
             $skippedCount++
             $lblStatus.Text = "[$queueNum/$totalQueue] Skipped '$($item.title)' (Already installed on $existingLoc)."
+            $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
             continue
         }
 
         $subDir = if ($item.platform -eq "PS1") { "PS1" } else { "PS2" }
         $destFolder = Join-Path $targetObj.Path $subDir
+        if (-not (Test-Path $destFolder)) {
+            try { New-Item -ItemType Directory -Path $destFolder -Force | Out-Null } catch {}
+        }
         $outFile = Join-Path $destFolder $item.fileName
 
         $lblStatus.Text = "[$queueNum/$totalQueue] Downloading '$($item.title)' to $($targetObj.Name)..."
         $lblProgress.Text = "Connecting..."
         $pbDownload.Value = 0
+        $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Render)
 
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         $lastUI = 0
+        $fs = $null
+        $stream = $null
+        $wc = $null
 
         try {
             $wc = New-Object System.Net.WebClient
-            $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             $stream = $wc.OpenRead($item.url)
             $totalBytes = [int64]$wc.ResponseHeaders["Content-Length"]
             $fs = [System.IO.File]::Create($outFile)
@@ -1159,11 +1331,15 @@ $btnDownload.Add_Click({
             }
 
             $fs.Close()
+            $fs = $null
             $stream.Close()
+            $stream = $null
             $wc.Dispose()
+            $wc = $null
 
             if ($outFile.EndsWith(".zip")) {
                 $lblProgress.Text = "[$queueNum/$totalQueue] Extracting game archive..."
+                $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
                 Expand-Archive -Path $outFile -DestinationPath $destFolder -Force
                 Remove-Item $outFile -Force
             }
@@ -1171,22 +1347,44 @@ $btnDownload.Add_Click({
             $completedCount++
             $pbDownload.Value = 100
         } catch {
-            if ($null -ne $fs) { $fs.Close() }
+            if ($null -ne $fs) { $fs.Close(); $fs = $null }
+            if ($null -ne $stream) { $stream.Close(); $stream = $null }
+            if ($null -ne $wc) { $wc.Dispose(); $wc = $null }
             if (Test-Path $outFile) { Remove-Item $outFile -Force -ErrorAction SilentlyContinue }
-            $lblStatus.Text = "ERROR on '$($item.title)': $($_.Exception.Message)"
+
+            $errSummary = $_.Exception.Message
+            $failedItems += @{ Item = $item; Error = $errSummary }
+            $lblStatus.Text = "ERROR on '$($item.title)': $errSummary"
+            $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
         }
     }
 
     $btnDownload.IsEnabled = $true
+    $btnOpenBrowser.IsEnabled = $true
     $pbDownload.Value = 100
     $lblProgress.Text = "Batch Completed"
     $lblSpeed.Text = ""
-    $lblStatus.Text = "Finished batch: $completedCount downloaded, $skippedCount duplicates skipped."
+    $failedCount = $failedItems.Count
+    $lblStatus.Text = "Finished batch: $completedCount downloaded, $skippedCount duplicates skipped, $failedCount failed/blocked."
     try { [System.Console]::Beep(1000, 200) } catch {}
     
     Refresh-StorageLabels
     Refresh-GameList
-    [System.Windows.MessageBox]::Show("Batch finished!`nDownloaded: $completedCount`nSkipped (Already installed): $skippedCount", "Download Finished", "OK", "Information")
+
+    if ($failedCount -eq 0) {
+        [System.Windows.MessageBox]::Show("Batch finished!`nDownloaded: $completedCount`nSkipped (Already installed): $skippedCount", "Download Finished", "OK", "Information")
+    } else {
+        $failedNames = ($failedItems | ForEach-Object { "- $($_.Item.title) ($($_.Error))" }) -join "`n"
+        if ($failedNames.Length -gt 500) { $failedNames = $failedNames.Substring(0, 497) + "..." }
+        
+        $msg = "Batch finished with issues:`n`nDownloaded: $completedCount`nSkipped (Already installed): $skippedCount`nBlocked / Failed: $failedCount`n`nDetails:`n$failedNames`n`nArchive.org blocked automated scripting for the failed games (requires browser verification or login).`n`nWould you like to open the failed download link(s) in your browser to download manually?"
+        $res = [System.Windows.MessageBox]::Show($msg, "Downloads Blocked - Open in Browser?", "YesNo", "Warning")
+        if ($res -eq [System.Windows.MessageBoxResult]::Yes) {
+            foreach ($f in $failedItems) {
+                Open-UrlInBrowser $f.Item.url
+            }
+        }
+    }
 })
 
 # Initial Bind

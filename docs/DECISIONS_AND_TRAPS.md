@@ -107,6 +107,33 @@ flowchart LR
 
 ---
 
+### [DECISION: Dual-Mode-Download-Pipeline-And-Browser-Fallback] | Aliases: manual download, browser fallback, bot restrictions, download engine
+> **1-Line Summary:** Introduced dual-mode download orchestration: direct in-app downloading for public archives paired with native browser launching, row double-click, and automatic prompt fallback for host-restricted links.
+* **Decision Maker:** `[DECIDED BY: HUMAN]`
+* **Original User Intention:** If automated script downloads fail due to host bot blocks or login requirements, the user must easily open the download link in their default web browser to download manually without friction.
+* **Options Considered:**
+  * **Option A (Rejected - In-App Only with Silent Masking):** Downloader only attempted automated `WebClient` requests. When Archive.org returned HTTP 403/404/503 (e.g., bot challenges or login locks on `ps2chd`), the errors were caught and immediately overwritten with "Batch finished: 0 downloaded", leaving the user confused and without any recourse.
+  * **Option B (Chosen - Dual-Mode with Triple Browser Access):** Retained in-app automated downloading for public sets, added an explicit "Open in Browser" action button in Row 1, wired row double-click and right-click context menus to launch links in the browser, and added an intelligent auto-fallback prompt when scripted downloads are blocked.
+* **Visual Pivot Map (What Failed vs. What Works):**
+
+```mermaid
+flowchart LR
+    subgraph Failed["❌ Old Approach (Silent Failure & Dead End)"]
+        F1["Host Blocks Script (403/404/503)"] --> F2["Error Silently Overwritten"]
+        F2 --> F3["User Sees '0 Downloaded' With No Options"]
+    end
+    subgraph Active["✅ Current Approach (Dual-Mode & Triple Access)"]
+        A1["Host Restriction Encountered"] --> A2["Status Displays Exact Error"]
+        A2 --> A3["One-Click Prompt Opens Browser Tabs"]
+        A4["User Clicks 'Open in Browser' Directly"] --> A5["Manual Browser Download Bypasses Bot Walls"]
+    end
+```
+
+* **Code Anchors (Grep Targets):**
+  * `retro-console-manager.ps1` -> `btnOpenBrowser`, `Open-UrlInBrowser`, `cmOpenBrowser`, `cmOpenDetails`, `btnDownload`
+
+---
+
 ## 2. Do-Not-Touch Engineering Landmines (Traps)
 
 ### [TRAP: WPF-Property-Versus-Field-Binding] | Aliases: wpf binding bug, checkbox freeze
@@ -142,3 +169,12 @@ flowchart LR
 * **Why This Trap Exists (Plain English):** PowerShell's tokenizer interprets `$name:` as a variable scope qualifier (like `$global:`, `$script:`). When no valid identifier follows the colon, PowerShell throws a fatal AST parser exception.
 * **Protected Code Anchors (Grep Targets):**
   * `retro-console-manager.ps1` -> `Refresh-StorageLabels`
+
+---
+
+### [TRAP: ArchiveOrg-Bot-Restriction-And-Silent-UI-Masking] | Aliases: silent download failure, bot blocking, 403 404 503 error
+> **1-Line Summary:** Never overwrite status error messages unconditionally at batch completion, and always provide browser fallback for locked items.
+* **Strict Rule:** Always track failures separately in `$failedItems`, force UI dispatcher refreshes so errors render immediately, and present an actionable prompt to launch blocked links in the default browser.
+* **Why This Trap Exists (Plain English):** Archive.org actively protects ROM collections with bot shields (HTTP 503) or login walls (`collection: ["loggedin"]`, HTTP 404/403). If the `catch` block merely updates a string and the outer loop immediately overwrites it with `"Finished batch: 0 downloaded"`, the user receives no feedback and assumes the application is broken.
+* **Protected Code Anchors (Grep Targets):**
+  * `retro-console-manager.ps1` -> `btnDownload.Add_Click`, `btnOpenBrowser`, `Open-UrlInBrowser`

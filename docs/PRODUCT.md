@@ -51,6 +51,17 @@
 * **Code Anchors (Grep Targets):**
   * `retro-console-manager.ps1` -> `btnBios`
 
+### [FEATURE: Dual-Mode-Download-And-Browser-Fallback] | Aliases: open in browser, manual download, download engine, browser fallback, context menu
+> **1-Line Summary:** Resilient download subsystem offering automated in-app downloads alongside instant default web browser launching, row double-click, and right-click context menu actions to bypass host bot restrictions and login walls.
+* **User Intention (Non-Negotiable):** When host archives (such as Archive.org) restrict automated script access or require account verification, the user must never be blocked or left with silent failures. They must be able to open download links directly in their browser with one click, double-click rows to initiate manual downloads or browse installed folders, and access full Archive.org details.
+* **Visual / UI Behavior:**
+  * **Action Bar Button (`btnOpenBrowser`):** Prominently placed in blue (`#2563EB`) next to `Download Selected Games`. Dynamically displays `Open in Browser`, `Open 1 in Browser`, or `Open [N] in Browser` matching selection.
+  * **Right-Click Context Menu:** Provides *Open Download Link in Browser*, *Open Archive.org Details Page*, *Copy Download URL*, and *Open Local Game Folder*.
+  * **Double-Click Row Action:** Double-clicking any game row opens its download link in the browser if uninstalled, or launches its storage directory in Windows Explorer if installed.
+  * **Smart Script-Block Fallback:** When in-app automated download encounters HTTP 403/404/503 bot barriers, it displays a detailed summary dialog and prompts to open the blocked links directly in the user's browser.
+* **Code Anchors (Grep Targets):**
+  * `retro-console-manager.ps1` -> `btnOpenBrowser`, `Open-UrlInBrowser`, `cmOpenBrowser`, `cmOpenDetails`, `cmCopyUrl`, `cmOpenFolder`, `btnDownload`
+
 ---
 
 ## 3. Planned Features & App-Merge Wishlist

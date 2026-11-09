@@ -153,6 +153,38 @@ sequenceDiagram
 
 ---
 
+### [SUBSYSTEM: Dual-Mode-Download-And-Browser-Engine] | Aliases: browser download, fallback engine, context menu, tls downloader
+> **1-Line Summary:** Dual automated and manual browser download orchestration with TLS 1.2/1.3 security, context menu routing, double-click actions, and Archive.org login fallback.
+
+* **How It Works (Plain English):** Automated in-app downloads run with pre-allocated buffer streams, UI dispatcher yields, and folder provisioning. When remote hosts (such as Archive.org) enforce bot challenges, login requirements, or rate limits, the system provides three layers of manual browser fallback:
+  1. **Direct Action Bar:** Clicking `Open in Browser` opens selected games in the user's default browser.
+  2. **Row Interactivity:** Double-clicking any game row immediately opens its download link in the browser (or its local directory if already installed); right-clicking surfaces direct links, Archive.org `/details/` landing pages, and clipboard copying.
+  3. **Auto-Prompt Fallback:** If in-app downloads encounter host restrictions, the batch completion dialog presents a list of failed titles and prompts to launch them directly in the browser with one click.
+* **Data Flow Diagram:**
+
+```mermaid
+flowchart TD
+    UserAction["User Selects Game(s)"]
+    ModeCheck{"Action Chosen"}
+    
+    UserAction --> ModeCheck
+    ModeCheck -->|"Click 'Open in Browser' / Double-Click"| BrowserLaunch["Open-UrlInBrowser\n(Default Web Browser)"]
+    ModeCheck -->|"Click 'Download Selected Games'"| AppDownloader["WebClient Buffer Stream (64KB)\n(TLS 1.2/1.3 + Ensure-DestFolder)"]
+    
+    AppDownloader --> DownloaderResult{"Download Result"}
+    DownloaderResult -->|"Success (200 OK)"| SaveDisk["Write File & Auto-Extract .zip\nIncrement Completed Count"]
+    DownloaderResult -->|"Host Restriction (403/404/503)"| CatchBlock["Record Failed Item\nLog Exact Exception Message"]
+    
+    CatchBlock --> FallbackPrompt{"Failed Items > 0?"}
+    FallbackPrompt -->|"User Confirms 'Yes'"| BrowserLaunch
+    FallbackPrompt -->|"User Selects 'No'"| StatusOnly["Display Detailed Summary in Status Bar"]
+```
+
+* **Code Anchors (Grep Targets):**
+  * `retro-console-manager.ps1` -> `Open-UrlInBrowser`, `btnOpenBrowser`, `btnDownload`, `cmOpenBrowser`, `cmOpenDetails`, `cmCopyUrl`, `cmOpenFolder`, `lvGames.Add_MouseDoubleClick`
+
+---
+
 ## 4. Verification & Health Checks
 
 ### [VERIFY: Automated-Check-Suite] | Aliases: test commands, build check, audit
