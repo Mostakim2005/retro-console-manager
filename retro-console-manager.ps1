@@ -289,9 +289,8 @@ function Open-UrlInBrowser([string]$url) {
             </Setter>
         </Style>
 
-        <!-- Custom ListViewItem: Pure Dark Contrast with Mouse-Over and Selection Highlight -->
+        <!-- Custom ListViewItem: Checkbox-Model Authoritative Highlight (No Selector Conflict) -->
         <Style TargetType="ListViewItem">
-            <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}"/>
             <Setter Property="SnapsToDevicePixels" Value="True"/>
             <Setter Property="Padding" Value="4,6"/>
             <Setter Property="Margin" Value="0,1"/>
@@ -309,18 +308,18 @@ function Open-UrlInBrowser([string]$url) {
                                 <Setter TargetName="RowBorder" Property="Background" Value="#1E293B"/>
                                 <Setter Property="Foreground" Value="#FFFFFF"/>
                             </Trigger>
-                            <Trigger Property="IsSelected" Value="True">
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
                                 <Setter TargetName="RowBorder" Property="Background" Value="#1D4ED8"/>
                                 <Setter Property="Foreground" Value="#FFFFFF"/>
-                            </Trigger>
-                            <MultiTrigger>
-                                <MultiTrigger.Conditions>
-                                    <Condition Property="IsSelected" Value="True"/>
-                                    <Condition Property="IsMouseOver" Value="True"/>
-                                </MultiTrigger.Conditions>
+                            </DataTrigger>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding IsSelected}" Value="True"/>
+                                    <Condition Binding="{Binding RelativeSource={RelativeSource Self}, Path=IsMouseOver}" Value="True"/>
+                                </MultiDataTrigger.Conditions>
                                 <Setter TargetName="RowBorder" Property="Background" Value="#2563EB"/>
                                 <Setter Property="Foreground" Value="#FFFFFF"/>
-                            </MultiTrigger>
+                            </MultiDataTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -432,8 +431,10 @@ function Open-UrlInBrowser([string]$url) {
 
         <!-- ROW 2: GAMES TABLE WITH CHECKBOXES & CLICKABLE PURE-ASCII HEADERS -->
         <ListView Name="lvGames" Grid.Row="2" Background="#090E1A" Foreground="#E2E8F0" BorderBrush="#1F2937" BorderThickness="1"
-                  SelectionMode="Multiple"
-                  VirtualizingStackPanel.IsVirtualizing="False"
+                  SelectionMode="Single"
+                  VirtualizingStackPanel.IsVirtualizing="True"
+                  VirtualizingStackPanel.VirtualizationMode="Recycling"
+                  ScrollViewer.IsDeferredScrollingEnabled="False"
                   ScrollViewer.HorizontalScrollBarVisibility="Auto"
                   ScrollViewer.VerticalScrollBarVisibility="Auto">
             <ListView.ContextMenu>
@@ -586,7 +587,13 @@ $brushGreen    = [System.Windows.Media.BrushConverter]::new().ConvertFromString(
 $brushRose     = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F43F5E")
 $brushAmber    = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#FBBF24")
 $brushViolet   = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A855F7")
-$brushEmerald  = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#10B981")
+$brushEmerald       = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#10B981")
+$brushDownloadIdle  = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#10B981")
+$brushDownloadReady = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#059669")
+$brushBrowserBlue   = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2563EB")
+
+$script:contextModel  = $null
+$script:suppressCount = $false
 
 $allCatalog = Get-Catalog
 
@@ -676,30 +683,25 @@ function Get-SelectedGames {
 }
 
 function Update-SelectionCount {
+    if ($script:suppressCount) { return }
     $sel = Get-SelectedGames
     $count = $sel.Count
     $lblSelectionCount.Text = "$count selected"
     if ($count -eq 0) {
         $btnDownload.Content = "Download Selected Games"
-        $btnDownload.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#10B981")
-        if ($btnOpenBrowser) {
-            $btnOpenBrowser.Content = "Open in Browser"
-            $btnOpenBrowser.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2563EB")
-        }
+        $btnDownload.Background = $brushDownloadIdle
+        $btnOpenBrowser.Content = "Open in Browser"
+        $btnOpenBrowser.Background = $brushBrowserBlue
     } elseif ($count -eq 1) {
         $btnDownload.Content = "Download 1 Game"
-        $btnDownload.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#059669")
-        if ($btnOpenBrowser) {
-            $btnOpenBrowser.Content = "Open 1 in Browser"
-            $btnOpenBrowser.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2563EB")
-        }
+        $btnDownload.Background = $brushDownloadReady
+        $btnOpenBrowser.Content = "Open 1 in Browser"
+        $btnOpenBrowser.Background = $brushBrowserBlue
     } else {
         $btnDownload.Content = "Download $count Games (Batch)"
-        $btnDownload.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#059669")
-        if ($btnOpenBrowser) {
-            $btnOpenBrowser.Content = "Open $count in Browser"
-            $btnOpenBrowser.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2563EB")
-        }
+        $btnDownload.Background = $brushDownloadReady
+        $btnOpenBrowser.Content = "Open $count in Browser"
+        $btnOpenBrowser.Background = $brushBrowserBlue
     }
 }
 
@@ -944,18 +946,92 @@ function Refresh-GameList {
     Update-SelectionCount
 }
 
-# --- Event: Mouse Right-Click to Select Item & Open Context Menu ---
+function Get-RowModelFromSource($originalSource) {
+    $node = $originalSource
+    while ($null -ne $node -and -not ($node -is [System.Windows.Controls.ListViewItem])) {
+        if ($node -is [System.Windows.Media.Visual] -or $node -is [System.Windows.Media.Media3D.Visual3D]) {
+            $node = [System.Windows.Media.VisualTreeHelper]::GetParent($node)
+        } else {
+            $node = [System.Windows.LogicalTreeHelper]::GetParent($node)
+        }
+    }
+    if ($node -is [System.Windows.Controls.ListViewItem] -and $node.DataContext -is [RetroGameItem]) {
+        return $node.DataContext
+    }
+    return $null
+}
+
+function Get-ContextTargets {
+    $sel = @(Get-SelectedGames)
+    if ($sel.Count -gt 0) { return $sel }
+    if ($null -ne $script:contextModel) { return @($script:contextModel) }
+    return @()
+}
+
+function Open-GameLocalLocation($item) {
+    $loc = Check-GameLocation $item
+    $targetObj = if ($loc -eq "HDD") {
+        $script:storageList[0]
+    } elseif ($loc -eq "SSD") {
+        $script:storageList[1]
+    } elseif ($rbHDD.IsChecked) {
+        $script:storageList[0]
+    } else {
+        $script:storageList[1]
+    }
+    $subDir = if ($item.platform -eq "PS1") { "PS1" } else { "PS2" }
+    $destFolder = Join-Path $targetObj.Path $subDir
+    $exactFile = Join-Path $destFolder $item.fileName
+    if (Test-Path -LiteralPath $exactFile) {
+        Start-Process explorer.exe -ArgumentList "/select,`"$exactFile`""
+        $lblStatus.Text = "Selected installed file for '$($item.title)' on $($targetObj.Key)."
+        return
+    }
+    if (-not (Test-Path -LiteralPath $destFolder)) {
+        try { New-Item -ItemType Directory -Path $destFolder -Force | Out-Null } catch {}
+    }
+    if (Test-Path -LiteralPath $destFolder) { Invoke-Item -LiteralPath $destFolder }
+    $lblStatus.Text = "Opened storage folder for '$($item.title)' on $($targetObj.Key)."
+}
+
+# --- Event: Frictionless Left-Click Multi-Select (No Ctrl Required) ---
+$lvGames.Add_PreviewMouseLeftButtonDown({
+    param($sender, $e)
+    # Ignore double-clicks so MouseDoubleClick stays clean; let CheckBox toggle itself
+    if ($e.ClickCount -ge 2) { return }
+    $src = $e.OriginalSource
+    while ($null -ne $src -and -not ($src -is [System.Windows.Controls.ListViewItem])) {
+        if ($src -is [System.Windows.Controls.Primitives.ToggleButton]) { return }
+        if ($src -is [System.Windows.Media.Visual] -or $src -is [System.Windows.Media.Media3D.Visual3D]) {
+            $src = [System.Windows.Media.VisualTreeHelper]::GetParent($src)
+        } else {
+            $src = [System.Windows.LogicalTreeHelper]::GetParent($src)
+        }
+    }
+    $model = Get-RowModelFromSource $e.OriginalSource
+    if ($null -ne $model) {
+        $model.IsSelected = -not $model.IsSelected
+        $script:contextModel = $model
+        $e.Handled = $true
+    }
+})
+
+# --- Event: Mouse Right-Click to Select Item (Never Toggle Off) & Update Context Menu ---
 $lvGames.Add_MouseRightButtonUp({
     param($sender, $e)
-    $hit = [System.Windows.Media.VisualTreeHelper]::GetParent($e.OriginalSource)
-    while ($null -ne $hit -and -not ($hit -is [System.Windows.Controls.ListViewItem])) {
-        $hit = [System.Windows.Media.VisualTreeHelper]::GetParent($hit)
-    }
-    if ($null -ne $hit -and ($hit -is [System.Windows.Controls.ListViewItem])) {
-        $model = $hit.DataContext
-        if ($model -is [RetroGameItem]) {
-            $lvGames.SelectedItem = $model
-            $model.IsSelected = -not $model.IsSelected
+    $model = Get-RowModelFromSource $e.OriginalSource
+    if ($null -ne $model) {
+        $script:contextModel = $model
+        if (-not $model.IsSelected) { $model.IsSelected = $true }
+        $cnt = (Get-SelectedGames).Count
+        if ($cnt -gt 1) {
+            $cmOpenBrowser.Header = "Open $cnt Download Links in Browser"
+            $cmOpenDetails.Header = "Open $cnt Archive.org Details Pages"
+            $cmCopyUrl.Header     = "Copy $cnt Download URLs"
+        } else {
+            $cmOpenBrowser.Header = "Open Download Link in Browser"
+            $cmOpenDetails.Header = "Open Archive.org Details Page"
+            $cmCopyUrl.Header     = "Copy Download URL"
         }
     }
 })
@@ -963,75 +1039,72 @@ $lvGames.Add_MouseRightButtonUp({
 # --- Event: Mouse Double-Click to Open in Browser or File Explorer ---
 $lvGames.Add_MouseDoubleClick({
     param($sender, $e)
-    $hit = [System.Windows.Media.VisualTreeHelper]::GetParent($e.OriginalSource)
-    while ($null -ne $hit -and -not ($hit -is [System.Windows.Controls.ListViewItem])) {
-        $hit = [System.Windows.Media.VisualTreeHelper]::GetParent($hit)
-    }
-    if ($null -ne $hit -and ($hit -is [System.Windows.Controls.ListViewItem])) {
-        $model = $hit.DataContext
-        if ($model -is [RetroGameItem] -and $null -ne $model.RawItem) {
-            $item = $model.RawItem
-            $loc = Check-GameLocation $item
-            if ($null -ne $loc) {
-                $targetObj = if ($loc -eq "HDD") { $script:storageList[0] } else { $script:storageList[1] }
-                $subDir = if ($item.platform -eq "PS1") { "PS1" } else { "PS2" }
-                $destFolder = Join-Path $targetObj.Path $subDir
-                if (Test-Path $destFolder) { Invoke-Item $destFolder }
-                $lblStatus.Text = "Opened installed folder for '$($item.title)' on $loc."
-            } else {
-                Open-UrlInBrowser $item.url
-                $lblStatus.Text = "Opened download link for '$($item.title)' in browser."
-            }
+    $model = Get-RowModelFromSource $e.OriginalSource
+    if ($null -ne $model -and $null -ne $model.RawItem) {
+        $item = $model.RawItem
+        $loc = Check-GameLocation $item
+        if ($null -ne $loc) {
+            Open-GameLocalLocation $item
+        } else {
+            Open-UrlInBrowser $item.url
+            $lblStatus.Text = "Opened download link for '$($item.title)' in browser."
         }
     }
 })
 
-# --- Context Menu Event Wiring ---
+# --- Context Menu Event Wiring (Batch-Aware) ---
 $cmOpenBrowser.Add_Click({
-    $item = if ($lvGames.SelectedItem -is [RetroGameItem]) { $lvGames.SelectedItem.RawItem } else { $null }
-    if ($item -and $item.url) {
-        Open-UrlInBrowser $item.url
-        $lblStatus.Text = "Opened download link for '$($item.title)' in browser."
+    $targets = @(Get-ContextTargets)
+    if ($targets.Count -eq 0) { return }
+    if ($targets.Count -gt 5) {
+        $confirm = [System.Windows.MessageBox]::Show("Open $($targets.Count) download tabs in your default browser?", "Confirm Multiple Tabs", "YesNo", "Question")
+        if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
     }
+    foreach ($t in $targets) {
+        if ($t.RawItem -and $t.RawItem.url) { Open-UrlInBrowser $t.RawItem.url }
+    }
+    $lblStatus.Text = "Opened $($targets.Count) download link(s) in browser."
 })
 
 $cmOpenDetails.Add_Click({
-    $item = if ($lvGames.SelectedItem -is [RetroGameItem]) { $lvGames.SelectedItem.RawItem } else { $null }
-    if ($item -and $item.url) {
-        $detailsUrl = $item.url
-        if ($detailsUrl -like "*archive.org/download/*") {
-            $parts = $detailsUrl -replace "https://archive.org/download/", ""
-            $itemId = $parts.Split('/')[0]
-            $detailsUrl = "https://archive.org/details/$itemId"
-        }
-        Open-UrlInBrowser $detailsUrl
-        $lblStatus.Text = "Opened Archive.org details page for '$($item.title)' in browser."
+    $targets = @(Get-ContextTargets)
+    if ($targets.Count -eq 0) { return }
+    if ($targets.Count -gt 5) {
+        $confirm = [System.Windows.MessageBox]::Show("Open $($targets.Count) Archive.org details pages in your default browser?", "Confirm Multiple Tabs", "YesNo", "Question")
+        if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
     }
+    foreach ($t in $targets) {
+        $item = $t.RawItem
+        if ($item -and $item.url) {
+            $detailsUrl = $item.url
+            if ($detailsUrl -like "*archive.org/download/*") {
+                $parts = $detailsUrl -replace "https://archive.org/download/", ""
+                $itemId = $parts.Split('/')[0]
+                $detailsUrl = "https://archive.org/details/$itemId"
+            }
+            Open-UrlInBrowser $detailsUrl
+        }
+    }
+    $lblStatus.Text = "Opened $($targets.Count) Archive.org details page(s) in browser."
 })
 
 $cmCopyUrl.Add_Click({
-    $item = if ($lvGames.SelectedItem -is [RetroGameItem]) { $lvGames.SelectedItem.RawItem } else { $null }
-    if ($item -and $item.url) {
+    $targets = @(Get-ContextTargets)
+    $urls = @($targets | ForEach-Object { if ($_.RawItem -and $_.RawItem.url) { $_.RawItem.url } })
+    if ($urls.Count -gt 0) {
         try {
-            [System.Windows.Clipboard]::SetText($item.url)
-            $lblStatus.Text = "Copied download URL for '$($item.title)' to clipboard."
+            [System.Windows.Clipboard]::SetText(($urls -join "`r`n"))
+            $lblStatus.Text = "Copied $($urls.Count) download URL(s) to clipboard."
         } catch {
-            $lblStatus.Text = "Failed to copy URL to clipboard."
+            $lblStatus.Text = "Failed to copy URL(s) to clipboard."
         }
     }
 })
 
 $cmOpenFolder.Add_Click({
-    $item = if ($lvGames.SelectedItem -is [RetroGameItem]) { $lvGames.SelectedItem.RawItem } else { $null }
-    if ($item) {
-        $targetObj = if ($rbHDD.IsChecked) { $script:storageList[0] } else { $script:storageList[1] }
-        $subDir = if ($item.platform -eq "PS1") { "PS1" } else { "PS2" }
-        $destFolder = Join-Path $targetObj.Path $subDir
-        if (-not (Test-Path $destFolder)) {
-            try { New-Item -ItemType Directory -Path $destFolder -Force | Out-Null } catch {}
-        }
-        Invoke-Item $destFolder
-        $lblStatus.Text = "Opened storage folder for '$($item.title)'."
+    $target = if ($null -ne $script:contextModel) { $script:contextModel } else { (Get-ContextTargets | Select-Object -First 1) }
+    if ($target -and $target.RawItem) {
+        Open-GameLocalLocation $target.RawItem
     }
 })
 
@@ -1143,17 +1216,20 @@ $hdrStatus.Add_Click({
 
 # --- Multi-Select Buttons ---
 $btnSelectAll.Add_Click({
-    foreach ($m in $displayedModels) { $m.IsSelected = $true }
+    $script:suppressCount = $true
+    try { foreach ($m in $displayedModels) { $m.IsSelected = $true } } finally { $script:suppressCount = $false }
     Update-SelectionCount
 })
 
 $btnSelectNone.Add_Click({
-    foreach ($m in $displayedModels) { $m.IsSelected = $false }
+    $script:suppressCount = $true
+    try { foreach ($m in $displayedModels) { $m.IsSelected = $false } } finally { $script:suppressCount = $false }
     Update-SelectionCount
 })
 
 $btnSelectInvert.Add_Click({
-    foreach ($m in $displayedModels) { $m.IsSelected = -not $m.IsSelected }
+    $script:suppressCount = $true
+    try { foreach ($m in $displayedModels) { $m.IsSelected = -not $m.IsSelected } } finally { $script:suppressCount = $false }
     Update-SelectionCount
 })
 
