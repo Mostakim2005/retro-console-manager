@@ -11,6 +11,17 @@
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
 
+# Enable Per-Monitor DPI Awareness v2 to prevent blurry scaling on 125%/150% displays
+if (-not ("Win32.DpiAwareness" -as [type])) {
+    try {
+        Add-Type -Namespace Win32 -Name DpiAwareness -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern bool SetProcessDpiAwarenessContext(System.IntPtr value);
+'@
+    } catch {}
+}
+try { [void][Win32.DpiAwareness]::SetProcessDpiAwarenessContext([IntPtr]-4) } catch {}
+
 # --- Compile Native C# Model for High-Performance Two-Way WPF Binding ---
 $csharpModel = @"
 using System;
@@ -422,10 +433,24 @@ function Open-UrlInBrowser([string]$url) {
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Retro Console Game Manager (PS1 &amp; PS2)" Height="780" Width="1180"
-        MinHeight="600" MinWidth="860"
+        MinHeight="600" MinWidth="1040"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
         WindowStartupLocation="CenterScreen" Background="#0A0F1D" Foreground="#F1F5F9"
         FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
+        <!-- Semantic Theme Tokens -->
+        <SolidColorBrush x:Key="Bg.Window"     Color="#0A0F1D"/>
+        <SolidColorBrush x:Key="Bg.Surface"    Color="#111827"/>
+        <SolidColorBrush x:Key="Bg.Table"      Color="#090E1A"/>
+        <SolidColorBrush x:Key="Bg.RowAlt"     Color="#0C1220"/>
+        <SolidColorBrush x:Key="Fg.Primary"    Color="#F1F5F9"/>
+        <SolidColorBrush x:Key="Fg.Secondary"  Color="#94A3B8"/>
+        <SolidColorBrush x:Key="Accent"        Color="#38BDF8"/>
+        <SolidColorBrush x:Key="Border.Subtle" Color="#1F2937"/>
+        <SolidColorBrush x:Key="Success"       Color="#10B981"/>
+        <SolidColorBrush x:Key="Warn"          Color="#FBBF24"/>
+        <SolidColorBrush x:Key="Danger"        Color="#F43F5E"/>
+
         <!-- Contrast Inversion Shield: Overrides OS theme brush colors -->
         <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#1D4ED8"/>
         <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="#FFFFFF"/>
@@ -468,7 +493,7 @@ function Open-UrlInBrowser([string]$url) {
             <Setter Property="FontWeight" Value="Bold"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Margin" Value="6,0,6,0"/>
+            <Setter Property="Margin" Value="0"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="RadioButton">
@@ -509,6 +534,9 @@ function Open-UrlInBrowser([string]$url) {
                             <GridViewRowPresenter Columns="{TemplateBinding GridView.ColumnCollection}" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
+                            <Trigger Property="ItemsControl.AlternationIndex" Value="1">
+                                <Setter TargetName="RowBorder" Property="Background" Value="#0C1220"/>
+                            </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="RowBorder" Property="Background" Value="#1E293B"/>
                                 <Setter Property="Foreground" Value="#FFFFFF"/>
@@ -556,11 +584,128 @@ function Open-UrlInBrowser([string]$url) {
             </Setter>
         </Style>
 
-        <!-- Checkbox Style -->
+        <!-- Dark GridViewColumnHeader Style (Fixes System-Light Header Band) -->
+        <Style TargetType="GridViewColumnHeader">
+            <Setter Property="Background" Value="#111827"/>
+            <Setter Property="Foreground" Value="#94A3B8"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="4,6"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="GridViewColumnHeader">
+                        <Border Name="HdrBorder" Background="{TemplateBinding Background}"
+                                BorderBrush="#1F2937" BorderThickness="0,0,0,1"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="HdrBorder" Property="Background" Value="#1E293B"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Dark ToolTip Style -->
+        <Style TargetType="ToolTip">
+            <Setter Property="Background" Value="#111827"/>
+            <Setter Property="Foreground" Value="#E2E8F0"/>
+            <Setter Property="BorderBrush" Value="#334155"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,5"/>
+        </Style>
+
+        <!-- Dark CheckBox Style -->
         <Style TargetType="CheckBox">
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="HorizontalAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Border Name="Box" Width="16" Height="16" CornerRadius="3"
+                                Background="#0B1220" BorderBrush="#475569" BorderThickness="1.5">
+                            <Path Name="CheckMark" Data="M 2,6 L 5,9 L 11,2" Stroke="#38BDF8" StrokeThickness="2"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" Visibility="Collapsed"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="Box" Property="BorderBrush" Value="#38BDF8"/>
+                                <Setter TargetName="Box" Property="Background" Value="#0F2D59"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Box" Property="BorderBrush" Value="#94A3B8"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Dark ScrollBar Style -->
+        <Style TargetType="ScrollBar">
+            <Setter Property="Background" Value="#0B1220"/>
+            <Setter Property="Width" Value="10"/>
+            <Setter Property="MinWidth" Value="10"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="5">
+                            <Track Name="PART_Track" IsDirectionReversed="True">
+                                <Track.Thumb>
+                                    <Thumb>
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Border Name="ThumbBorder" Background="#334155" CornerRadius="4" Margin="1"/>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="ThumbBorder" Property="Background" Value="#475569"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="Orientation" Value="Horizontal">
+                    <Setter Property="Width" Value="Auto"/>
+                    <Setter Property="Height" Value="10"/>
+                    <Setter Property="MinHeight" Value="10"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ScrollBar">
+                                <Border Background="{TemplateBinding Background}" CornerRadius="5">
+                                    <Track Name="PART_Track" IsDirectionReversed="False">
+                                        <Track.Thumb>
+                                            <Thumb>
+                                                <Thumb.Template>
+                                                    <ControlTemplate TargetType="Thumb">
+                                                        <Border Name="ThumbBorder" Background="#334155" CornerRadius="4" Margin="1"/>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                <Setter TargetName="ThumbBorder" Property="Background" Value="#475569"/>
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </Thumb.Template>
+                                            </Thumb>
+                                        </Track.Thumb>
+                                    </Track>
+                                </Border>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Trigger>
+            </Style.Triggers>
         </Style>
     </Window.Resources>
 
@@ -584,60 +729,66 @@ function Open-UrlInBrowser([string]$url) {
 
                 <!-- Column 0 (Left): Hard Disk Drive Storage Pill -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
-                    <RadioButton Name="rbHDD" GroupName="StorageTarget" Content="Hard Disk Drive (E:) [Loading...]" Style="{StaticResource LargeStoragePill}" IsChecked="True"/>
+                    <RadioButton Name="rbHDD" GroupName="StorageTarget" Content="" Style="{StaticResource LargeStoragePill}" IsChecked="True"/>
                 </StackPanel>
 
                 <!-- Column 1 (Middle): App Title (Centered) -->
-                <TextBlock Grid.Column="1" Text="RETRO CONSOLE MANAGER" FontWeight="Bold" FontSize="16" Foreground="#38BDF8" 
-                           VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="RETRO CONSOLE MANAGER" FontWeight="Bold" FontSize="16" Foreground="#38BDF8"
+                           VerticalAlignment="Center" HorizontalAlignment="Center" Margin="12,0"/>
 
                 <!-- Column 2 (Right): Solid State Drive Storage Pill -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                    <RadioButton Name="rbSSD" GroupName="StorageTarget" Content="Solid State Drive (C:) [Loading...]" Style="{StaticResource LargeStoragePill}" Margin="0"/>
+                    <RadioButton Name="rbSSD" GroupName="StorageTarget" Content="" Style="{StaticResource LargeStoragePill}"/>
                 </StackPanel>
             </Grid>
         </Border>
 
         <!-- ROW 1: SEARCH, MULTI-SELECT, RESET, HELP & DOWNLOAD ACTION BAR -->
         <Border Grid.Row="1" Background="#111827" CornerRadius="6" Padding="14,8" Margin="0,0,0,8" BorderBrush="#1F2937" BorderThickness="1">
-            <DockPanel LastChildFill="False">
-                <!-- Left: Search Box -->
-                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center" Margin="0,0,20,0">
-                    <TextBlock Text="Search:" VerticalAlignment="Center" Foreground="#94A3B8" Margin="0,0,8,0" FontWeight="SemiBold"/>
-                    <TextBox Name="txtSearch" Width="200" Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155" 
-                             CaretBrush="#38BDF8" Padding="8,4" VerticalAlignment="Center"
-                             ToolTip="Type keyword to filter games by title, genre, or system"/>
-                </StackPanel>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
 
-                <!-- Center: Multi-Selection Controls, Counter, Help Button & Reset Filters -->
-                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
-                    <TextBlock Text="Select:" Foreground="#94A3B8" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
-                    <Button Name="btnSelectAll" Content="All" Margin="0,0,5,0" Padding="10,4"/>
-                    <Button Name="btnSelectNone" Content="None" Margin="0,0,5,0" Padding="10,4"/>
-                    <Button Name="btnSelectInvert" Content="Invert" Margin="0,0,8,0" Padding="10,4"/>
-                    <Button Name="btnClearAllSel" Content="Clear All" Margin="0,0,10,0" Padding="8,4" ToolTip="Clear all selections including any hidden by active filters"/>
-                    <TextBlock Name="lblSelectionCount" Text="0 selected" Foreground="#38BDF8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <Button Name="btnHelp" Content="?" Width="26" Height="26" Padding="0" Margin="0,0,8,0" FontWeight="Bold" 
-                            Foreground="#38BDF8" Background="#1E293B" BorderBrush="#334155" BorderThickness="1" 
-                            VerticalAlignment="Center" ToolTip="Click for Controls &amp; Filter Help"/>
-                    <Button Name="btnResetFilters" Content="Reset Filters" Margin="0,0,14,0" Padding="10,4" 
-                            Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155" 
-                            ToolTip="Reset all filters, search text, and sorting back to default"/>
-                </StackPanel>
+                <WrapPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,14,2">
+                        <TextBlock Text="Search:" VerticalAlignment="Center" Foreground="#94A3B8" Margin="0,0,8,0" FontWeight="SemiBold"/>
+                        <TextBox Name="txtSearch" Width="180" Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155"
+                                 CaretBrush="#38BDF8" Padding="8,4" VerticalAlignment="Center"
+                                 ToolTip="Type keyword to filter games by title, genre, or system (Esc to clear)"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,0,2">
+                        <TextBlock Text="Select:" Foreground="#94A3B8" VerticalAlignment="Center" Margin="0,0,6,0" FontWeight="SemiBold"/>
+                        <Button Name="btnSelectAll" Content="All" Margin="0,0,4,0" Padding="8,4"/>
+                        <Button Name="btnSelectNone" Content="None" Margin="0,0,4,0" Padding="8,4"/>
+                        <Button Name="btnSelectInvert" Content="Invert" Margin="0,0,4,0" Padding="8,4"/>
+                        <Button Name="btnClearAllSel" Content="Clear All" Margin="0,0,8,0" Padding="8,4" ToolTip="Clear all selections including any hidden by active filters"/>
+                        <TextBlock Name="lblSelectionCount" Text="0 selected" Foreground="#38BDF8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <Button Name="btnHelp" Content="?" Width="26" Height="26" Padding="0" Margin="0,0,6,0" FontWeight="Bold"
+                                Foreground="#38BDF8" Background="#1E293B" BorderBrush="#334155" BorderThickness="1"
+                                VerticalAlignment="Center" ToolTip="Click for Controls &amp; Filter Help"/>
+                        <Button Name="btnResetFilters" Content="Reset Filters" Margin="0,0,10,0" Padding="8,4"
+                                Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155"
+                                ToolTip="Reset all filters, search text, and sorting back to default"/>
+                    </StackPanel>
+                </WrapPanel>
 
-                <!-- Right: Download Selected Games Button + Open in Browser Button + Open BIOS Folder -->
-                <Button Name="btnDownload" Content="Download Selected Games" DockPanel.Dock="Right" 
-                        Background="#10B981" Foreground="#0F172A" FontWeight="Bold" FontSize="13" Padding="16,7" Cursor="Hand"/>
-                <Button Name="btnOpenBrowser" Content="Open in Browser" DockPanel.Dock="Right" Margin="0,0,8,0" 
-                        Background="#2563EB" Foreground="#FFFFFF" FontWeight="Bold" FontSize="13" Padding="16,7" Cursor="Hand"
-                        ToolTip="Open download links for selected games directly in your default web browser for manual download"/>
-                <Button Name="btnBios" Content="Open BIOS Folder" DockPanel.Dock="Right" Margin="0,0,8,0" Padding="14,6" Background="#1E293B" VerticalAlignment="Center"/>
-            </DockPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button Name="btnBios" Content="Open BIOS Folder" Margin="0,0,8,0" Padding="12,6" Background="#1E293B" VerticalAlignment="Center"/>
+                    <Button Name="btnOpenBrowser" Content="Open in Browser" Margin="0,0,8,0"
+                            Background="#2563EB" Foreground="#FFFFFF" FontWeight="Bold" FontSize="13" Padding="14,7" Cursor="Hand"
+                            ToolTip="Open download links for selected games directly in your default web browser for manual download"/>
+                    <Button Name="btnDownload" Content="Download Selected Games"
+                            Background="#10B981" Foreground="#0F172A" FontWeight="Bold" FontSize="13" Padding="14,7" Cursor="Hand"/>
+                </StackPanel>
+            </Grid>
         </Border>
 
         <!-- ROW 2: GAMES TABLE WITH CHECKBOXES & CLICKABLE PURE-ASCII HEADERS -->
         <ListView Name="lvGames" Grid.Row="2" Background="#090E1A" Foreground="#E2E8F0" BorderBrush="#1F2937" BorderThickness="1"
                   SelectionMode="Single"
+                  AlternationCount="2"
                   VirtualizingStackPanel.IsVirtualizing="True"
                   VirtualizingStackPanel.VirtualizationMode="Recycling"
                   ScrollViewer.IsDeferredScrollingEnabled="False"
@@ -667,56 +818,56 @@ function Open-UrlInBrowser([string]$url) {
                     </GridViewColumn>
 
                     <!-- Column 1: No. (Reset all sorts to catalog ID) -->
-                    <GridViewColumn Width="46" DisplayMemberBinding="{Binding Id}">
+                    <GridViewColumn Width="44" DisplayMemberBinding="{Binding Id}">
                         <GridViewColumn.Header>
                             <Button Name="hdrNo" Content="No. v" Style="{StaticResource HeaderBtn}" ToolTip="Reset all sorts to Catalog ID order"/>
                         </GridViewColumn.Header>
                     </GridViewColumn>
 
                     <!-- Column 2: Console (Cycles ALL / PS1 / PS2) -->
-                    <GridViewColumn Width="110" DisplayMemberBinding="{Binding Platform}">
+                    <GridViewColumn Width="105" DisplayMemberBinding="{Binding Platform}">
                         <GridViewColumn.Header>
                             <Button Name="hdrConsole" Content="Console: All [v]" Style="{StaticResource HeaderBtn}" Foreground="#38BDF8" ToolTip="Click to Cycle: All -> PS1 -> PS2"/>
                         </GridViewColumn.Header>
                     </GridViewColumn>
 
-                    <!-- Column 3: Title (Cycles A-Z / Z-A / Off) -->
-                    <GridViewColumn Width="310" DisplayMemberBinding="{Binding Title}">
+                    <!-- Column 3: Title (Fluid width, Cycles A-Z / Z-A / Off) -->
+                    <GridViewColumn Width="280" DisplayMemberBinding="{Binding Title}">
                         <GridViewColumn.Header>
                             <Button Name="hdrTitle" Content="Title (A-Z) ^ [#1]" Style="{StaticResource HeaderBtn}" Foreground="#38BDF8" ToolTip="Click to cycle Title sort (Most recently clicked becomes [#1])"/>
                         </GridViewColumn.Header>
                     </GridViewColumn>
 
                     <!-- Column 4: Release Year -->
-                    <GridViewColumn Width="85" DisplayMemberBinding="{Binding Year}">
+                    <GridViewColumn Width="70" DisplayMemberBinding="{Binding Year}">
                         <GridViewColumn.Header>
                             <Button Name="hdrYear" Content="Year v" Style="{StaticResource HeaderBtn}" ToolTip="Click to cycle Year sort (Most recently clicked becomes [#1])"/>
                         </GridViewColumn.Header>
                     </GridViewColumn>
 
                     <!-- Column 5: Genre -->
-                    <GridViewColumn Width="210" DisplayMemberBinding="{Binding Genre}">
+                    <GridViewColumn Width="170" DisplayMemberBinding="{Binding Genre}">
                         <GridViewColumn.Header>
                             <Button Name="hdrGenre" Content="Genre v" Style="{StaticResource HeaderBtn}" ToolTip="Click to cycle Genre sort (Most recently clicked becomes [#1])"/>
                         </GridViewColumn.Header>
                     </GridViewColumn>
 
                     <!-- Column 6: Graphics (High / Low / 2D / All) -->
-                    <GridViewColumn Width="140" DisplayMemberBinding="{Binding Graphics}">
+                    <GridViewColumn Width="115" DisplayMemberBinding="{Binding Graphics}">
                         <GridViewColumn.Header>
                             <Button Name="hdrGraphics" Content="Graphics: All [v]" Style="{StaticResource HeaderBtn}" Foreground="#38BDF8" ToolTip="Click to Cycle: All -> High (Realistic) -> Low (Stylized) -> Retro (2D)"/>
                         </GridViewColumn.Header>
                     </GridViewColumn>
 
                     <!-- Column 7: Download Size -->
-                    <GridViewColumn Width="120" DisplayMemberBinding="{Binding Size}">
+                    <GridViewColumn Width="100" DisplayMemberBinding="{Binding Size}">
                         <GridViewColumn.Header>
                             <Button Name="hdrSize" Content="Size v" Style="{StaticResource HeaderBtn}" ToolTip="Click to cycle Size sort (Most recently clicked becomes [#1])"/>
                         </GridViewColumn.Header>
                     </GridViewColumn>
 
                     <!-- Column 8: Status (Cycles All / Available / Installed) -->
-                    <GridViewColumn Width="150" DisplayMemberBinding="{Binding Status}">
+                    <GridViewColumn Width="135" DisplayMemberBinding="{Binding Status}">
                         <GridViewColumn.Header>
                             <Button Name="hdrStatus" Content="Status: All [v]" Style="{StaticResource HeaderBtn}" Foreground="#38BDF8" ToolTip="Click to Cycle: All -> Available Only -> Installed Only"/>
                         </GridViewColumn.Header>
@@ -725,8 +876,8 @@ function Open-UrlInBrowser([string]$url) {
             </ListView.View>
         </ListView>
 
-        <!-- ROW 3: PROGRESS BAR -->
-        <Border Name="pnlProgress" Grid.Row="3" Margin="0,8,0,6">
+        <!-- ROW 3: PROGRESS BAR (Collapsed While Idle) -->
+        <Border Name="pnlProgress" Grid.Row="3" Margin="0,8,0,6" Visibility="Collapsed">
             <StackPanel>
                 <ProgressBar Name="pbDownload" Height="8" Background="#1E293B" Foreground="#38BDF8" BorderThickness="0" Value="0" Maximum="100"/>
                 <DockPanel LastChildFill="False" Margin="0,4,0,0">
@@ -740,11 +891,15 @@ function Open-UrlInBrowser([string]$url) {
 
         <!-- ROW 4: FOOTER STATUS -->
         <Border Grid.Row="4" Background="#060A14" CornerRadius="4" Padding="10,6" BorderBrush="#1F2937" BorderThickness="1">
-            <DockPanel LastChildFill="False">
-                <TextBlock Name="lblStatus" Text="Ready. Default (Title A-Z)" 
-                           Foreground="#94A3B8" FontSize="12" DockPanel.Dock="Left"/>
-                <TextBlock Name="lblGameCount" Text="58 Games Loaded" Foreground="#38BDF8" FontWeight="SemiBold" FontSize="12" DockPanel.Dock="Right"/>
-            </DockPanel>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Name="lblStatus" Grid.Column="0" Text="" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                           Foreground="#94A3B8" FontSize="12" Margin="0,0,12,0"/>
+                <TextBlock Name="lblGameCount" Grid.Column="1" Text="" Foreground="#38BDF8" FontWeight="SemiBold" FontSize="12"/>
+            </Grid>
         </Border>
     </Grid>
 </Window>
@@ -1092,6 +1247,7 @@ function Update-PipelineStatus {
         $sortPart = if ($sortDescs.Count -gt 0) { "[Sort: " + ($sortDescs -join " -> ") + "]" } else { "[Sort: Catalog ID]" }
         $lblStatus.Text = "Active Pipeline: $filterPart | $sortPart"
     }
+    $lblStatus.ToolTip = $lblStatus.Text
 }
 
 function Refresh-GameList {
@@ -1824,6 +1980,36 @@ $btnDownload.Add_Click({
                 Open-UrlInBrowser $f.Item.url
             }
         }
+    }
+})
+
+# --- Fluid Title Column Layout (Zero Horizontal Overflow) ---
+function Update-ColumnLayout {
+    if ($lvGames.ActualWidth -le 0) { return }
+    $fixed = 40 + 44 + 105 + 70 + 170 + 115 + 100 + 135
+    $avail = $lvGames.ActualWidth - 26
+    $lvGames.View.Columns[3].Width = [math]::Max(220, ($avail - $fixed))
+}
+$lvGames.Add_SizeChanged({ Update-ColumnLayout })
+
+# --- Keyboard Shortcuts (Ctrl+A, Esc, F5) ---
+$window.Add_KeyDown({
+    param($sender, $e)
+    $mods = [System.Windows.Input.Keyboard]::Modifiers
+    if ($e.Key -eq [System.Windows.Input.Key]::Escape -and $txtSearch.IsKeyboardFocusWithin) {
+        $txtSearch.Text = ""
+        $e.Handled = $true
+    } elseif ($e.Key -eq [System.Windows.Input.Key]::F5) {
+        Reset-LibraryIndexCache
+        Refresh-StorageLabels
+        Refresh-GameList
+        $lblStatus.Text = "Library rescanned."
+        $e.Handled = $true
+    } elseif ($e.Key -eq [System.Windows.Input.Key]::A -and ($mods -band [System.Windows.Input.ModifierKeys]::Control) -and -not $txtSearch.IsKeyboardFocusWithin) {
+        $script:suppressCount = $true
+        try { foreach ($m in $displayedModels) { $m.IsSelected = $true } } finally { $script:suppressCount = $false }
+        Update-SelectionCount
+        $e.Handled = $true
     }
 })
 
