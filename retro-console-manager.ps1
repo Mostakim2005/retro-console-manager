@@ -92,16 +92,43 @@ $scriptDir = Get-AppRoot
 $jsonFile = Join-Path $scriptDir "games_catalog.json"
 $configFile = Join-Path $scriptDir "storage_config.json"
 
+$script:storageFailures = @{}
+
+function Ensure-DestFolder([string]$path) {
+    try {
+        if (-not (Test-Path -LiteralPath $path)) {
+            New-Item -ItemType Directory -Path $path -Force -ErrorAction Stop | Out-Null
+        }
+        return $true
+    } catch {
+        Write-AppLog "Ensure-DestFolder failed for '$path': $($_.Exception.Message)" "ERROR"
+        return $false
+    }
+}
+
+function Test-FolderWritable([string]$path) {
+    if (-not (Ensure-DestFolder $path)) { return $false }
+    $probe = Join-Path $path (".write-test-" + [guid]::NewGuid().ToString("N") + ".tmp")
+    try {
+        [System.IO.File]::WriteAllText($probe, "ok")
+        Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+        return $true
+    } catch {
+        Write-AppLog "Test-FolderWritable failed for '$path': $($_.Exception.Message)" "ERROR"
+        return $false
+    }
+}
+
 function Load-StorageConfig {
-    $defaultLeft = if (Test-Path "E:\") { "E:\Cracked\Console_Games" } else { Join-Path $env:USERPROFILE "Retro_Games\Primary_Storage" }
-    $defaultRight = "C:\Retro_Games\Console_Games"
+    $defaultLeft  = if (Test-Path -LiteralPath "E:\") { "E:\Cracked\Console_Games" } else { Join-Path $env:USERPROFILE "Retro_Games\Primary_Storage" }
+    $defaultRight = Join-Path $env:USERPROFILE "Retro_Games\Console_Games"
 
     $cfgLeft = $defaultLeft
     $cfgRight = $defaultRight
 
-    if (Test-Path $configFile) {
+    if (Test-Path -LiteralPath $configFile) {
         try {
-            $loaded = Get-Content $configFile -Raw -Encoding UTF8 | ConvertFrom-Json
+            $loaded = Get-Content -LiteralPath $configFile -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($loaded.LeftPath -and (-not [string]::IsNullOrWhiteSpace($loaded.LeftPath))) {
                 $cfgLeft = $loaded.LeftPath
             }
@@ -136,18 +163,22 @@ function Save-StorageConfig {
 }
 
 function Ensure-StorageFolders {
+    $script:storageFailures = @{}
     foreach ($s in $script:storageList) {
         try {
             $root = [System.IO.Path]::GetPathRoot($s.Path)
             if ($root -and $root.Length -ge 1) {
                 $s.Drive = $root.Substring(0,1).ToUpper()
             }
-        } catch {}
+        } catch {
+            Write-AppLog "Ensure-StorageFolders root parse failed for '$($s.Path)': $($_.Exception.Message)" "WARN"
+        }
         foreach ($sub in @("PS1", "PS2", "BIOS")) {
-            try {
-                $p = Join-Path $s.Path $sub
-                if (-not (Test-Path $p)) { New-Item -ItemType Directory -Path $p -Force | Out-Null }
-            } catch {}
+            $p = Join-Path $s.Path $sub
+            if (-not (Ensure-DestFolder $p)) {
+                $script:storageFailures[$s.Key] = "Cannot create/write folder '$p' (double-click pill to choose a writable folder)."
+                break
+            }
         }
     }
 }
@@ -311,9 +342,41 @@ function Check-GameLocation($item, $index = $null) {
 function Get-FreeSpaceGB($driveLetter) {
     try {
         $d = Get-PSDrive $driveLetter -ErrorAction SilentlyContinue
-        if ($d) { return [math]::Round($d.Free / 1GB, 1) }
-    } catch {}
-    return 0
+        if ($d -and $null -ne $d.Free) { return [math]::Round($d.Free / 1GB, 1) }
+    } catch {
+        Write-AppLog "Get-FreeSpaceGB failed for drive $($driveLetter): $($_.Exception.Message)" "WARN"
+    }
+    return $null
+}
+
+function Expand-GameArchive([string]$archivePath, [string]$destFolder) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $destFull = [System.IO.Path]::GetFullPath($destFolder).TrimEnd('') + ''
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+    $extractedGameFile = $false
+    try {
+        foreach ($entry in $zip.Entries) {
+            $target = [System.IO.Path]::GetFullPath((Join-Path $destFolder $entry.FullName))
+            if (-not $target.StartsWith($destFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Archive entry escapes destination folder: $($entry.FullName)"
+            }
+            if ([string]::IsNullOrEmpty($entry.Name)) {
+                [void][System.IO.Directory]::CreateDirectory($target)
+                continue
+            }
+            [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($target))
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+            $ext = [System.IO.Path]::GetExtension($entry.Name).ToLowerInvariant()
+            if ($ext -in @(".chd", ".iso", ".bin", ".cue", ".m3u", ".pbp", ".gz")) {
+                $extractedGameFile = $true
+            }
+        }
+    } finally {
+        $zip.Dispose()
+    }
+    if (-not $extractedGameFile) {
+        Write-AppLog "Archive '$archivePath' extracted without a recognized game image extension." "WARN"
+    }
 }
 
 function Enable-ModernTls {
@@ -663,12 +726,14 @@ function Open-UrlInBrowser([string]$url) {
         </ListView>
 
         <!-- ROW 3: PROGRESS BAR -->
-        <Border Grid.Row="3" Margin="0,8,0,6">
+        <Border Name="pnlProgress" Grid.Row="3" Margin="0,8,0,6">
             <StackPanel>
                 <ProgressBar Name="pbDownload" Height="8" Background="#1E293B" Foreground="#38BDF8" BorderThickness="0" Value="0" Maximum="100"/>
                 <DockPanel LastChildFill="False" Margin="0,4,0,0">
-                    <TextBlock Name="lblProgress" Text="Ready" Foreground="#94A3B8" FontSize="12" DockPanel.Dock="Left"/>
-                    <TextBlock Name="lblSpeed" Text="" Foreground="#FCD34D" FontSize="12" FontWeight="SemiBold" DockPanel.Dock="Right"/>
+                    <TextBlock Name="lblProgress" Text="Ready" Foreground="#94A3B8" FontSize="12" VerticalAlignment="Center" DockPanel.Dock="Left"/>
+                    <Button Name="btnStop" Content="Stop" Visibility="Collapsed" DockPanel.Dock="Right" Margin="10,0,0,0" Padding="10,2"
+                            Background="#991B1B" Foreground="#FFFFFF" BorderBrush="#DC2626" FontSize="11"/>
+                    <TextBlock Name="lblSpeed" Text="" Foreground="#FCD34D" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" DockPanel.Dock="Right"/>
                 </DockPanel>
             </StackPanel>
         </Border>
@@ -707,9 +772,11 @@ $cmOpenDetails     = $window.FindName("cmOpenDetails")
 $cmCopyUrl         = $window.FindName("cmCopyUrl")
 $cmOpenFolder      = $window.FindName("cmOpenFolder")
 $lvGames           = $window.FindName("lvGames")
+$pnlProgress       = $window.FindName("pnlProgress")
 $pbDownload        = $window.FindName("pbDownload")
 $lblProgress       = $window.FindName("lblProgress")
 $lblSpeed          = $window.FindName("lblSpeed")
+$btnStop           = $window.FindName("btnStop")
 $lblStatus         = $window.FindName("lblStatus")
 $lblGameCount      = $window.FindName("lblGameCount")
 
@@ -759,28 +826,28 @@ $script:sortPriority.Add("Title")
 
 $displayedModels = New-Object System.Collections.ObjectModel.ObservableCollection[RetroGameItem]
 
+function Format-StorageLabel([string]$kind, $slot) {
+    $leaf = Split-Path $slot.Path -Leaf
+    $free = Get-FreeSpaceGB $slot.Drive
+    $freeText = if ($null -eq $free) { "n/a" } else { "$free GB Free" }
+    return "$kind ($($slot.Drive): $leaf) [$freeText]"
+}
+
 function Refresh-StorageLabels {
-    $drive0 = $script:storageList[0].Drive
-    $drive1 = $script:storageList[1].Drive
-    $h = Get-FreeSpaceGB $drive0
-    $s = Get-FreeSpaceGB $drive1
+    $slot0 = $script:storageList[0]
+    $slot1 = $script:storageList[1]
 
-    $leaf0 = Split-Path $script:storageList[0].Path -Leaf
-    if ($script:storageList[0].Path -eq "E:\Cracked\Console_Games") {
-        $rbHDD.Content = "Hard Disk Drive ($($drive0):) [$h GB Free]"
-    } else {
-        $rbHDD.Content = "Hard Disk Drive ($($drive0): $leaf0) [$h GB Free]"
-    }
+    $rbHDD.Content = Format-StorageLabel "Hard Disk Drive" $slot0
+    $rbSSD.Content = Format-StorageLabel "Solid State Drive" $slot1
 
-    $leaf1 = Split-Path $script:storageList[1].Path -Leaf
-    if ($script:storageList[1].Path -eq "C:\Retro_Games\Console_Games") {
-        $rbSSD.Content = "Solid State Drive ($($drive1):) [$s GB Free]"
-    } else {
-        $rbSSD.Content = "Solid State Drive ($($drive1): $leaf1) [$s GB Free]"
-    }
+    $fail0 = $script:storageFailures[$slot0.Key]
+    $fail1 = $script:storageFailures[$slot1.Key]
 
-    $rbHDD.ToolTip = "Active Path: $($script:storageList[0].Path)`nDouble-click to browse and select a custom folder"
-    $rbSSD.ToolTip = "Active Path: $($script:storageList[1].Path)`nDouble-click to browse and select a custom folder"
+    $rbHDD.ToolTip = if ($fail0) { "WARNING: $fail0`nPath: $($slot0.Path)" } else { "Active Path: $($slot0.Path)`nDouble-click to browse and select a custom folder" }
+    $rbSSD.ToolTip = if ($fail1) { "WARNING: $fail1`nPath: $($slot1.Path)" } else { "Active Path: $($slot1.Path)`nDouble-click to browse and select a custom folder" }
+
+    if ($fail0 -and -not $fail1 -and $rbHDD.IsChecked) { $rbSSD.IsChecked = $true }
+    elseif ($fail1 -and -not $fail0 -and $rbSSD.IsChecked) { $rbHDD.IsChecked = $true }
 }
 
 function Select-CustomStorageFolder([int]$slotIndex) {
@@ -1526,11 +1593,32 @@ $btnOpenBrowser.Add_Click({
     $lblStatus.Text = "Opened $($selectedModels.Count) download link(s) in your default web browser."
 })
 
+$script:abortBatch    = $false
+$script:isDownloading = $false
+
+$btnStop.Add_Click({
+    $script:abortBatch = $true
+    $btnStop.IsEnabled = $false
+    $lblProgress.Text = "Cancelling after current chunk..."
+})
+
+$window.Add_Closing({
+    param($sender, $e)
+    if ($script:isDownloading) {
+        $res = [System.Windows.MessageBox]::Show("A download batch is currently running. Stop downloads and close?", "Download In Progress", "YesNo", "Warning")
+        if ($res -ne [System.Windows.MessageBoxResult]::Yes) {
+            $e.Cancel = $true
+            return
+        }
+        $script:abortBatch = $true
+    }
+})
+
 # --- Batch / Single Download ---
 $btnDownload.Add_Click({
     $selectedModels = Get-SelectedGames
     if ($selectedModels.Count -eq 0) {
-        [System.Windows.MessageBox]::Show("Please click checkboxes or rows to select games for download!", "No Games Selected", "OK", "Information")
+        [System.Windows.MessageBox]::Show("Please click checkboxes or rows to select games for download!", "No Games Selected", "OK", "Information") | Out-Null
         return
     }
     $hiddenSel = [math]::Max(0, $selectedModels.Count - (Get-VisibleSelectedCount))
@@ -1539,122 +1627,197 @@ $btnDownload.Add_Click({
         if ($c -ne [System.Windows.MessageBoxResult]::Yes) { return }
     }
 
-    Enable-ModernTls
-
     $targetObj = if ($rbHDD.IsChecked) { $script:storageList[0] } else { $script:storageList[1] }
-    $btnDownload.IsEnabled = $false
-    $btnOpenBrowser.IsEnabled = $false
-    $totalQueue = $selectedModels.Count
-    $completedCount = 0
-    $skippedCount = 0
-    $failedItems = @()
 
-    for ($idx = 0; $idx -lt $totalQueue; $idx++) {
-        $model = $selectedModels[$idx]
-        $item = $model.RawItem
-        $queueNum = $idx + 1
-
-        $existingLoc = Check-GameLocation $item
-        if ($null -ne $existingLoc) {
-            $skippedCount++
-            $lblStatus.Text = "[$queueNum/$totalQueue] Skipped '$($item.title)' (Already installed on $existingLoc)."
-            $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
-            continue
-        }
-
-        $subDir = if ($item.platform -eq "PS1") { "PS1" } else { "PS2" }
-        $destFolder = Join-Path $targetObj.Path $subDir
-        if (-not (Test-Path $destFolder)) {
-            try { New-Item -ItemType Directory -Path $destFolder -Force | Out-Null } catch {}
-        }
-        $outFile = Join-Path $destFolder $item.fileName
-
-        $lblStatus.Text = "[$queueNum/$totalQueue] Downloading '$($item.title)' to $($targetObj.Name)..."
-        $lblProgress.Text = "Connecting..."
-        $pbDownload.Value = 0
-        $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Render)
-
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $lastUI = 0
-        $fs = $null
-        $stream = $null
-        $wc = $null
-
-        try {
-            $wc = New-Object System.Net.WebClient
-            $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            $stream = $wc.OpenRead($item.url)
-            $totalBytes = [int64]$wc.ResponseHeaders["Content-Length"]
-            $fs = [System.IO.File]::Create($outFile)
-            $buffer = New-Object byte[] 65536
-            $downloaded = 0
-
-            while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-                $fs.Write($buffer, 0, $read)
-                $downloaded += $read
-
-                if ($sw.ElapsedMilliseconds - $lastUI -gt 150) {
-                    $lastUI = $sw.ElapsedMilliseconds
-                    $pct = if ($totalBytes -gt 0) { [math]::Min(100, [math]::Round(($downloaded / $totalBytes) * 100, 1)) } else { 0 }
-                    $speedMBs = if ($sw.Elapsed.TotalSeconds -gt 0) { [math]::Round(($downloaded / 1MB) / $sw.Elapsed.TotalSeconds, 1) } else { 0 }
-                    
-                    $pbDownload.Value = $pct
-                    $lblProgress.Text = "[$queueNum/$totalQueue] $pct% ({0:N1} MB / {1:N1} MB)" -f ($downloaded / 1MB), ($totalBytes / 1MB)
-                    $lblSpeed.Text = "$speedMBs MB/s"
-                    
-                    $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
-                }
-            }
-
-            $fs.Close()
-            $fs = $null
-            $stream.Close()
-            $stream = $null
-            $wc.Dispose()
-            $wc = $null
-
-            if ($outFile.EndsWith(".zip")) {
-                $lblProgress.Text = "[$queueNum/$totalQueue] Extracting game archive..."
-                $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
-                Expand-Archive -Path $outFile -DestinationPath $destFolder -Force
-                Remove-Item $outFile -Force
-            }
-
-            $completedCount++
-            $pbDownload.Value = 100
-        } catch {
-            if ($null -ne $fs) { $fs.Close(); $fs = $null }
-            if ($null -ne $stream) { $stream.Close(); $stream = $null }
-            if ($null -ne $wc) { $wc.Dispose(); $wc = $null }
-            if (Test-Path $outFile) { Remove-Item $outFile -Force -ErrorAction SilentlyContinue }
-
-            $errSummary = $_.Exception.Message
-            $failedItems += @{ Item = $item; Error = $errSummary }
-            $lblStatus.Text = "ERROR on '$($item.title)': $errSummary"
-            $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
-        }
+    # Pre-flight drive availability, writability, and free-space check (B-09, B-10)
+    $drive = Get-PSDrive $targetObj.Drive -ErrorAction SilentlyContinue
+    if (-not $drive -or $null -eq $drive.Free) {
+        [System.Windows.MessageBox]::Show("Drive $($targetObj.Drive): is not available. Double-click a storage pill to choose another folder.", "Storage Unavailable", "OK", "Warning") | Out-Null
+        return
+    }
+    if (-not (Test-FolderWritable $targetObj.Path)) {
+        [System.Windows.MessageBox]::Show("Target folder is not writable:`n$($targetObj.Path)`n`nDouble-click the storage pill to choose a writable folder.", "Storage Not Writable", "OK", "Warning") | Out-Null
+        return
+    }
+    $index = Get-LibraryIndexCached
+    $pendingModels = @($selectedModels | Where-Object { $null -eq (Check-GameLocation $_.RawItem $index) })
+    $needBytes = 0.0
+    foreach ($pm in $pendingModels) { $needBytes += [double]$pm.SizeBytes }
+    if ($needBytes -gt ($drive.Free * 0.95)) {
+        $msg = "Selected uninstalled games need {0:N1} GB, but only {1:N1} GB is free on {2} ({3}:).`n`nContinue anyway?" -f ($needBytes / 1GB), ($drive.Free / 1GB), $targetObj.Name, $targetObj.Drive
+        if ([System.Windows.MessageBox]::Show($msg, "Insufficient Disk Space", "YesNo", "Warning") -ne [System.Windows.MessageBoxResult]::Yes) { return }
     }
 
-    $btnDownload.IsEnabled = $true
-    $btnOpenBrowser.IsEnabled = $true
-    $pbDownload.Value = 100
-    $lblProgress.Text = "Batch Completed"
+    Enable-ModernTls
+
+    $script:abortBatch    = $false
+    $script:isDownloading = $true
+    $btnDownload.IsEnabled     = $false
+    $btnOpenBrowser.IsEnabled  = $false
+    $rbHDD.IsEnabled           = $false
+    $rbSSD.IsEnabled           = $false
+    $btnResetFilters.IsEnabled = $false
+    $pnlProgress.Visibility    = [System.Windows.Visibility]::Visible
+    $btnStop.Visibility        = [System.Windows.Visibility]::Visible
+    $btnStop.IsEnabled         = $true
+
+    $totalQueue     = $selectedModels.Count
+    $completedCount = 0
+    $skippedCount   = 0
+    $cancelled      = $false
+    $failedItems    = @()
+
+    try {
+        for ($idx = 0; $idx -lt $totalQueue; $idx++) {
+            if ($script:abortBatch) { $cancelled = $true; break }
+
+            $model    = $selectedModels[$idx]
+            $item     = $model.RawItem
+            $queueNum = $idx + 1
+
+            $existingLoc = Check-GameLocation $item $index
+            if ($null -ne $existingLoc) {
+                $skippedCount++
+                $lblStatus.Text = "[$queueNum/$totalQueue] Skipped '$($item.title)' (Already installed on $existingLoc)."
+                $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+                continue
+            }
+
+            $subDir     = if ($item.platform -eq "PS1") { "PS1" } else { "PS2" }
+            $destFolder = Join-Path $targetObj.Path $subDir
+            if (-not (Ensure-DestFolder $destFolder)) {
+                $failedItems += @{ Item = $item; Error = "Cannot create destination folder '$destFolder'." }
+                continue
+            }
+            $outFile  = Join-Path $destFolder $item.fileName
+            $partFile = "$outFile.part"
+
+            $lblStatus.Text = "[$queueNum/$totalQueue] Downloading '$($item.title)' to $($targetObj.Name) ($($targetObj.Drive):)..."
+            $lblProgress.Text = "[$queueNum/$totalQueue] Connecting..."
+            $pbDownload.IsIndeterminate = $true
+            $pbDownload.Value = 0
+            $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Render)
+
+            $sw     = [System.Diagnostics.Stopwatch]::StartNew()
+            $lastUI = 0
+            $fs     = $null
+            $stream = $null
+            $wc     = $null
+
+            try {
+                $wc = New-Object System.Net.WebClient
+                $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                $wc.Headers.Add("Accept-Encoding", "identity")
+                $stream = $wc.OpenRead($item.url)
+
+                $totalBytes = [int64]0
+                $lenHeader  = $wc.ResponseHeaders["Content-Length"]
+                if ($lenHeader -and [int64]::TryParse($lenHeader, [ref]$totalBytes) -and $totalBytes -gt 0) {
+                    $pbDownload.IsIndeterminate = $false
+                } else {
+                    $totalBytes = 0
+                    $pbDownload.IsIndeterminate = $true
+                }
+
+                $fs         = [System.IO.File]::Create($partFile)
+                $buffer     = New-Object byte[] 65536
+                $downloaded = [int64]0
+
+                while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                    if ($script:abortBatch) { $cancelled = $true; break }
+                    $fs.Write($buffer, 0, $read)
+                    $downloaded += $read
+
+                    if ($sw.ElapsedMilliseconds - $lastUI -gt 150) {
+                        $lastUI = $sw.ElapsedMilliseconds
+                        $speedMBs = if ($sw.Elapsed.TotalSeconds -gt 0) { [math]::Round(($downloaded / 1MB) / $sw.Elapsed.TotalSeconds, 1) } else { 0 }
+                        if ($totalBytes -gt 0) {
+                            $pct = [math]::Min(100, [math]::Round(($downloaded / $totalBytes) * 100, 1))
+                            $pbDownload.IsIndeterminate = $false
+                            $pbDownload.Value = $pct
+                            $lblProgress.Text = "[$queueNum/$totalQueue] $pct% ({0:N1} MB / {1:N1} MB)" -f ($downloaded / 1MB), ($totalBytes / 1MB)
+                        } else {
+                            $pbDownload.IsIndeterminate = $true
+                            $lblProgress.Text = "[$queueNum/$totalQueue] {0:N1} MB downloaded" -f ($downloaded / 1MB)
+                        }
+                        $lblSpeed.Text = "$speedMBs MB/s"
+                        $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+                    }
+                }
+
+                $fs.Close(); $fs = $null
+                $stream.Close(); $stream = $null
+                $wc.Dispose(); $wc = $null
+
+                if ($cancelled) {
+                    if (Test-Path -LiteralPath $partFile) { Remove-Item -LiteralPath $partFile -Force -ErrorAction SilentlyContinue }
+                    break
+                }
+
+                if (Test-Path -LiteralPath $outFile) { Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue }
+                Move-Item -LiteralPath $partFile -Destination $outFile -Force
+
+                if ($outFile.EndsWith(".zip", [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $pbDownload.IsIndeterminate = $true
+                    $lblProgress.Text = "[$queueNum/$totalQueue] Extracting archive (this may take a moment)..."
+                    $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+                    Expand-GameArchive $outFile $destFolder
+                    Remove-Item -LiteralPath $outFile -Force
+                }
+
+                $completedCount++
+                $pbDownload.IsIndeterminate = $false
+                $pbDownload.Value = 100
+            } catch {
+                if ($null -ne $fs) { $fs.Close(); $fs = $null }
+                if ($null -ne $stream) { $stream.Close(); $stream = $null }
+                if ($null -ne $wc) { $wc.Dispose(); $wc = $null }
+                if (Test-Path -LiteralPath $partFile) { Remove-Item -LiteralPath $partFile -Force -ErrorAction SilentlyContinue }
+
+                $errSummary = $_.Exception.Message
+                Write-AppLog "Download failed for '$($item.title)': $errSummary" "ERROR"
+                $failedItems += @{ Item = $item; Error = $errSummary }
+                $lblStatus.Text = "ERROR on '$($item.title)': $errSummary"
+                $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+            }
+        }
+    } finally {
+        $script:isDownloading      = $false
+        $btnDownload.IsEnabled     = $true
+        $btnOpenBrowser.IsEnabled  = $true
+        $rbHDD.IsEnabled           = $true
+        $rbSSD.IsEnabled           = $true
+        $btnResetFilters.IsEnabled = $true
+        $btnStop.Visibility        = [System.Windows.Visibility]::Collapsed
+        $pbDownload.IsIndeterminate = $false
+    }
+
     $lblSpeed.Text = ""
-    $failedCount = $failedItems.Count
-    $lblStatus.Text = "Finished batch: $completedCount downloaded, $skippedCount duplicates skipped, $failedCount failed/blocked."
-    try { [System.Console]::Beep(1000, 200) } catch {}
-    
+    $failedCount   = $failedItems.Count
+    if ($cancelled) {
+        $pbDownload.Value = 0
+        $lblProgress.Text = "Cancelled"
+        $lblStatus.Text   = "Batch cancelled: $completedCount downloaded, $skippedCount skipped, $failedCount failed."
+    } else {
+        $pbDownload.Value = 100
+        $lblProgress.Text = "Batch Completed"
+        $lblStatus.Text   = "Finished batch: $completedCount downloaded, $skippedCount duplicates skipped, $failedCount failed/blocked."
+        try { [System.Console]::Beep(1000, 200) } catch {}
+    }
+
     Reset-LibraryIndexCache
     Refresh-StorageLabels
     Refresh-GameList
 
-    if ($failedCount -eq 0) {
-        [System.Windows.MessageBox]::Show("Batch finished!`nDownloaded: $completedCount`nSkipped (Already installed): $skippedCount", "Download Finished", "OK", "Information")
+    if ($cancelled) {
+        [System.Windows.MessageBox]::Show("Download batch cancelled.`nDownloaded: $completedCount`nSkipped: $skippedCount`nFailed: $failedCount", "Download Cancelled", "OK", "Information") | Out-Null
+    } elseif ($failedCount -eq 0) {
+        [System.Windows.MessageBox]::Show("Batch finished!`nDownloaded: $completedCount`nSkipped (Already installed): $skippedCount", "Download Finished", "OK", "Information") | Out-Null
     } else {
         $failedNames = ($failedItems | ForEach-Object { "- $($_.Item.title) ($($_.Error))" }) -join "`n"
         if ($failedNames.Length -gt 500) { $failedNames = $failedNames.Substring(0, 497) + "..." }
-        
-        $msg = "Batch finished with issues:`n`nDownloaded: $completedCount`nSkipped (Already installed): $skippedCount`nBlocked / Failed: $failedCount`n`nDetails:`n$failedNames`n`nArchive.org blocked automated scripting for the failed games (requires browser verification or login).`n`nWould you like to open the failed download link(s) in your browser to download manually?"
+
+        $msg = "Batch finished with issues:`n`nDownloaded: $completedCount`nSkipped (Already installed): $skippedCount`nBlocked / Failed: $failedCount`n`nDetails:`n$failedNames`n`nArchive.org may have blocked automated scripting for the failed games (requires browser verification or login).`n`nWould you like to open the failed download link(s) in your browser to download manually?"
         $res = [System.Windows.MessageBox]::Show($msg, "Downloads Blocked - Open in Browser?", "YesNo", "Warning")
         if ($res -eq [System.Windows.MessageBoxResult]::Yes) {
             foreach ($f in $failedItems) {
