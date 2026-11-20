@@ -2,7 +2,7 @@
 > **1-Line Summary:** The permanent source of truth for what the user wants Retro Console Manager to do and feel like, independent of how the code is currently implemented.
 
 ## 1. Core Vision & User Experience Intent
-* **What This App Does (Plain English):** Retro Console Manager is a desktop hub for Windows allowing retro gaming fans to browse, multi-select, and download curated PlayStation 1 and PlayStation 2 classics, manage BIOS requirements, and route downloads to either external HDD or internal SSD storage.
+* **What This App Does (Plain English):** Retro Console Manager is a desktop hub for Windows allowing retro gaming fans to browse, multi-select, and download curated PlayStation 1 and PlayStation 2 classics, open emulator BIOS folders, and route downloads to either external HDD or internal SSD storage.
 * **How It Must Feel to Use:** Instantaneous, zero-flicker native desktop experience with balanced modern dark-slate visuals (`#0A0F1D`), frictionless multi-selection without complex keyboard chords, flexible storage configuration, and zero console popup windows.
 
 ---
@@ -38,8 +38,8 @@
   * `retro-console-manager.ps1` -> `btnResetFilters`, `Reset-AllFiltersAndSorts`
 
 ### [FEATURE: Real-Time-Download-Engine] | Aliases: game download, download progress, extract archive, speed meter
-> **1-Line Summary:** Multi-threaded web downloader with real-time progress percentages, speed meter (MB/s), duplicate checking, and automatic `.zip` extraction.
-* **User Intention (Non-Negotiable):** Downloading games must give clear visual feedback without locking the user interface, skip existing files to save bandwidth, and extract `.zip` files into `.chd` or `.iso` automatically.
+> **1-Line Summary:** Sequential web downloader with live progress, Stop/Cancel support, atomic `.part` files, pre-flight free-space checks, speed meter (MB/s), duplicate checking, and zip-slip-safe `.zip` extraction.
+* **User Intention (Non-Negotiable):** Downloading games must give clear visual feedback with safe cancellation, skip existing files to save bandwidth, verify free space, and safely extract `.zip` archives automatically.
 * **Visual / UI Behavior:** Lives in Row 3 and Row 4. Shows an animated progress bar, percentage, downloaded vs. total MB, real-time transfer speed, and completion audio chime.
 * **Code Anchors (Grep Targets):**
   * `retro-console-manager.ps1` -> `btnDownload`, `Check-GameLocation`, `pbDownload`, `lblProgress`, `lblSpeed`

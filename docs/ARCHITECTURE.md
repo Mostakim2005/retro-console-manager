@@ -121,7 +121,7 @@ sequenceDiagram
 ```
 
 * **Code Anchors (Grep Targets):**
-  * `retro-console-manager.ps1` -> `RetroGameItem`, `_isSelected`, `Update-SelectionCount`, `lvGames.Add_MouseRightButtonUp`
+  * `retro-console-manager.ps1` -> `RetroGameItem`, `_isSelected`, `$script:selectedIds`, `Update-SelectionCount`, `lvGames.Add_PreviewMouseLeftButtonDown`, `lvGames.Add_MouseRightButtonUp`
 
 ---
 
@@ -188,16 +188,9 @@ flowchart TD
 ## 4. Verification & Health Checks
 
 ### [VERIFY: Automated-Check-Suite] | Aliases: test commands, build check, audit
-> **1-Line Summary:** Mandatory commands to verify syntax, encoding, and WPF data binding before submitting any changes.
+> **1-Line Summary:** Single source of truth for mandatory syntax, UTF-8 BOM, ASCII purity, and WPF data-binding checks.
 
-* **AST Parser Check & ASCII Purity:**
-  ```powershell
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "& { `$txt = [System.IO.File]::ReadAllText('retro-console-manager.ps1', [System.Text.Encoding]::UTF8); `$errors = `$null; [System.Management.Automation.Language.Parser]::ParseInput(`$txt, [ref]`$null, [ref]`$errors); if (`$errors.Count -gt 0) { exit 1 }; Write-Host 'Syntax OK' }"
-  ```
-* **Automated Data Binding & UI Initialization:**
-  ```powershell
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "& { Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms; `$code = Get-Content 'retro-console-manager.ps1' -Raw; `$testBlock = `$code -replace '\$window\.ShowDialog\(\)\s*\|\s*Out-Null', '# Test'; . ([scriptblock]::Create(`$testBlock)); Write-Host \"Loaded `$(`$displayedModels.Count) games.\" }"
-  ```
+* Run the full verification commands defined in [`AGENTS.md` Section 2](../AGENTS.md#2-mandatory-verification--health-checks) before every commit.
 
 ---
 
