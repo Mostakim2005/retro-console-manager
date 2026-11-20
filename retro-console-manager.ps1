@@ -49,21 +49,46 @@ public class RetroGameItem : INotifyPropertyChanged {
 }
 "@
 
-Add-Type -TypeDefinition $csharpModel -ErrorAction SilentlyContinue
+$script:logFile = Join-Path $env:LOCALAPPDATA "RetroConsoleManager\app.log"
 
-# --- Storage & Path Configuration (Relative & Portable) ---
-$scriptDir = if ($PSScriptRoot) {
-    $PSScriptRoot
-} elseif ($MyInvocation.MyCommand -and $MyInvocation.MyCommand.Path) {
-    Split-Path -Parent $MyInvocation.MyCommand.Path
-} else {
-    $cur = (Get-Location).Path
-    if (Test-Path (Join-Path $cur "games_catalog.json")) {
-        $cur
-    } else {
-        "C:\Users\kazir\Documents\Agentic Harness\Retro Console Manager"
-    }
+function Write-AppLog([string]$message, [string]$level = "INFO") {
+    try {
+        $dir = Split-Path -Parent $script:logFile
+        if (-not (Test-Path -LiteralPath $dir)) {
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        }
+        if ((Test-Path -LiteralPath $script:logFile) -and ((Get-Item -LiteralPath $script:logFile).Length -gt 2MB)) {
+            Move-Item -LiteralPath $script:logFile -Destination "$($script:logFile).1" -Force
+        }
+        "{0:yyyy-MM-dd HH:mm:ss} [{1}] {2}" -f (Get-Date), $level, $message |
+            Add-Content -LiteralPath $script:logFile -Encoding UTF8
+    } catch {}
 }
+
+if (-not ("RetroGameItem" -as [type])) {
+    Add-Type -TypeDefinition $csharpModel -ErrorAction Stop
+}
+
+# --- Storage & Path Configuration (Relative, Portable & PS2EXE-Safe) ---
+function Get-AppRoot {
+    if ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot "games_catalog.json"))) {
+        return $PSScriptRoot
+    }
+    if ($MyInvocation.MyCommand -and $MyInvocation.MyCommand.Path) {
+        $invDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+        if (Test-Path -LiteralPath (Join-Path $invDir "games_catalog.json")) { return $invDir }
+    }
+    try {
+        $exeDir = Split-Path -Parent ([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+        if ($exeDir -and (Test-Path -LiteralPath (Join-Path $exeDir "games_catalog.json"))) { return $exeDir }
+    } catch {}
+    $cur = (Get-Location).Path
+    if (Test-Path -LiteralPath (Join-Path $cur "games_catalog.json")) { return $cur }
+    if ($PSScriptRoot) { return $PSScriptRoot }
+    throw "Cannot resolve script directory containing games_catalog.json. Run via run-retro-console-manager.bat."
+}
+
+$scriptDir = Get-AppRoot
 $jsonFile = Join-Path $scriptDir "games_catalog.json"
 $configFile = Join-Path $scriptDir "storage_config.json"
 
@@ -83,7 +108,9 @@ function Load-StorageConfig {
             if ($loaded.RightPath -and (-not [string]::IsNullOrWhiteSpace($loaded.RightPath))) {
                 $cfgRight = $loaded.RightPath
             }
-        } catch {}
+        } catch {
+            Write-AppLog "Load-StorageConfig failed to parse '$configFile': $($_.Exception.Message)" "WARN"
+        }
     }
 
     $leftDrive = try { ([System.IO.Path]::GetPathRoot($cfgLeft)).Substring(0,1).ToUpper() } catch { "E" }
@@ -103,7 +130,9 @@ function Save-StorageConfig {
         }
         $jsonOut = $cfgObj | ConvertTo-Json -Depth 4
         [System.IO.File]::WriteAllText($configFile, $jsonOut, [System.Text.Encoding]::UTF8)
-    } catch {}
+    } catch {
+        Write-AppLog "Save-StorageConfig failed for '$configFile': $($_.Exception.Message)" "ERROR"
+    }
 }
 
 function Ensure-StorageFolders {
@@ -126,44 +155,87 @@ function Ensure-StorageFolders {
 Load-StorageConfig
 Ensure-StorageFolders
 
-function Get-Catalog {
-    if (Test-Path $jsonFile) {
-        $raw = Get-Content $jsonFile -Raw -Encoding UTF8 | ConvertFrom-Json
-        foreach ($item in $raw) {
-            $sz = $item.size.ToUpper()
-            $num = [double]($sz -replace '[^\d\.]', '')
-            $bytes = if ($sz -like "*GB*") { $num * 1024 * 1024 * 1024 } else { $num * 1024 * 1024 }
-            $item | Add-Member -NotePropertyName "SizeBytes" -NotePropertyValue $bytes -Force
-
-            # SizeTier for multi-tier coherent sorting:
-            # Tier 1 (Compact): < 500 MB
-            # Tier 2 (Medium-Small): 500 MB - 1 GB
-            # Tier 3 (Medium): 1 GB - 2 GB
-            # Tier 4 (Large): 2 GB - 3.5 GB
-            # Tier 5 (Extra Large): >= 3.5 GB
-            $tier = if ($bytes -lt (500 * 1024 * 1024)) {
-                1
-            } elseif ($bytes -lt (1024 * 1024 * 1024)) {
-                2
-            } elseif ($bytes -lt (2 * 1024 * 1024 * 1024)) {
-                3
-            } elseif ($bytes -lt (3.5 * 1024 * 1024 * 1024)) {
-                4
-            } else {
-                5
-            }
-            $item | Add-Member -NotePropertyName "SizeTier" -NotePropertyValue $tier -Force
-
-            if (-not $item.year) {
-                $item | Add-Member -NotePropertyName "year" -NotePropertyValue 2004 -Force
-            }
-            if (-not $item.graphics) {
-                $item | Add-Member -NotePropertyName "graphics" -NotePropertyValue "High (Realistic)" -Force
-            }
-        }
-        return $raw
+function ConvertTo-SizeBytes([string]$sizeText) {
+    if ($sizeText -notmatch '^\s*(?<n>\d+(?:\.\d+)?)\s*(?<u>KB|MB|GB)\s*$') {
+        throw "Unparseable catalog size '$sizeText' (expected e.g. '450 MB' or '1.2 GB')."
     }
-    return @()
+    $mult = switch ($Matches.u.ToUpperInvariant()) {
+        "KB" { 1KB }
+        "MB" { 1MB }
+        "GB" { 1GB }
+    }
+    return ([double]$Matches.n * $mult)
+}
+
+function Assert-CatalogRecord($item) {
+    if ([string]::IsNullOrWhiteSpace($item.title)) { throw "Catalog id $($item.id): missing title." }
+    if ($item.platform -notin @("PS1", "PS2")) { throw "Catalog id $($item.id): unsupported platform '$($item.platform)'." }
+    if ([string]::IsNullOrWhiteSpace($item.fileName)) { throw "Catalog id $($item.id): missing fileName." }
+    $leaf = [System.IO.Path]::GetFileName($item.fileName)
+    if ($leaf -ne $item.fileName -or $leaf -match '[\\/:*?"<>|]') {
+        throw "Catalog id $($item.id): unsafe fileName '$($item.fileName)'."
+    }
+    $u = $null
+    if (-not [System.Uri]::TryCreate($item.url, [System.UriKind]::Absolute, [ref]$u)) {
+        throw "Catalog id $($item.id): URL is not absolute."
+    }
+    if ($u.Scheme -ne "https") {
+        throw "Catalog id $($item.id): URL must use https (got $($u.Scheme))."
+    }
+    if ($u.Host -ne "archive.org" -and $u.Host -notlike "*.archive.org") {
+        throw "Catalog id $($item.id): URL host '$($u.Host)' is not allowlisted."
+    }
+    if (-not $item.year -or -not $item.graphics) {
+        throw "Catalog id $($item.id): missing required year or graphics field."
+    }
+}
+
+function Get-Catalog {
+    if (-not (Test-Path -LiteralPath $jsonFile)) {
+        $msg = "Catalog file not found: $jsonFile`n`ngames_catalog.json must sit next to retro-console-manager.ps1."
+        Write-AppLog $msg "ERROR"
+        [System.Windows.MessageBox]::Show($msg, "Catalog Missing", "OK", "Error") | Out-Null
+        throw $msg
+    }
+    try {
+        $raw = Get-Content -LiteralPath $jsonFile -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        $msg = "Catalog JSON is invalid ($jsonFile): $($_.Exception.Message)"
+        Write-AppLog $msg "ERROR"
+        [System.Windows.MessageBox]::Show($msg, "Catalog Corrupt", "OK", "Error") | Out-Null
+        throw $msg
+    }
+    $items = @($raw)
+    if ($items.Count -eq 0) {
+        $msg = "Catalog contains no game entries: $jsonFile"
+        Write-AppLog $msg "ERROR"
+        [System.Windows.MessageBox]::Show($msg, "Empty Catalog", "OK", "Error") | Out-Null
+        throw $msg
+    }
+    $valid = @()
+    $bad = @()
+    foreach ($item in $items) {
+        try {
+            Assert-CatalogRecord $item
+            $bytes = ConvertTo-SizeBytes $item.size
+            $item | Add-Member -NotePropertyName "SizeBytes" -NotePropertyValue $bytes -Force
+            $tier = if ($bytes -lt (500 * 1024 * 1024)) { 1 }
+                    elseif ($bytes -lt (1024 * 1024 * 1024)) { 2 }
+                    elseif ($bytes -lt (2 * 1024 * 1024 * 1024)) { 3 }
+                    elseif ($bytes -lt (3.5 * 1024 * 1024 * 1024)) { 4 }
+                    else { 5 }
+            $item | Add-Member -NotePropertyName "SizeTier" -NotePropertyValue $tier -Force
+            $valid += $item
+        } catch {
+            $bad += $_.Exception.Message
+            Write-AppLog "Skipped invalid catalog entry: $($_.Exception.Message)" "WARN"
+        }
+    }
+    if ($bad.Count -gt 0) {
+        $summary = ($bad | Select-Object -First 8) -join "`n"
+        [System.Windows.MessageBox]::Show("Skipped $($bad.Count) invalid catalog record(s):`n`n$summary", "Catalog Validation Warning", "OK", "Warning") | Out-Null
+    }
+    return $valid
 }
 
 $script:libraryIndex = $null
@@ -244,21 +316,41 @@ function Get-FreeSpaceGB($driveLetter) {
     return 0
 }
 
-# Ensure TLS 1.2 and TLS 1.3 are enabled on PowerShell 5.1 / Core
-try {
-    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls13
-} catch {}
+function Enable-ModernTls {
+    $protos = [System.Net.SecurityProtocolType]::Tls12
+    try {
+        $tls13 = [System.Net.SecurityProtocolType]"Tls13"
+        if ($null -ne $tls13) { $protos = $protos -bor $tls13 }
+    } catch {
+        Write-AppLog "TLS 1.3 enum unavailable on this .NET runtime; using TLS 1.2." "INFO"
+    }
+    try {
+        [System.Net.ServicePointManager]::SecurityProtocol = $protos
+    } catch {
+        Write-AppLog "Enable-ModernTls failed: $($_.Exception.Message)" "WARN"
+    }
+}
+
+Enable-ModernTls
 
 function Open-UrlInBrowser([string]$url) {
     if ([string]::IsNullOrWhiteSpace($url)) { return }
+    $u = $null
+    if (-not [System.Uri]::TryCreate($url, [System.UriKind]::Absolute, [ref]$u)) {
+        Write-AppLog "Blocked invalid URL: $url" "WARN"
+        if ($lblStatus) { $lblStatus.Text = "Blocked invalid URL." }
+        return
+    }
+    if ($u.Scheme -ne "https" -and $u.Scheme -ne "http") {
+        Write-AppLog "Blocked non-web URL scheme ($($u.Scheme)): $url" "WARN"
+        if ($lblStatus) { $lblStatus.Text = "Blocked non-web URL scheme: $($u.Scheme)" }
+        return
+    }
     try {
-        [System.Diagnostics.Process]::Start($url) | Out-Null
+        Start-Process -FilePath $u.AbsoluteUri
     } catch {
-        try {
-            Start-Process "cmd.exe" -ArgumentList "/c start `"`" `"$url`"" -WindowStyle Hidden
-        } catch {
-            [System.Windows.MessageBox]::Show("Could not open browser for URL:`n$url`n`nError: $($_.Exception.Message)", "Browser Error", "OK", "Warning")
-        }
+        Write-AppLog "Open-UrlInBrowser failed for '$($u.AbsoluteUri)': $($_.Exception.Message)" "ERROR"
+        [System.Windows.MessageBox]::Show("Could not open browser for URL:`n$($u.AbsoluteUri)`n`nError: $($_.Exception.Message)", "Browser Error", "OK", "Warning") | Out-Null
     }
 }
 
@@ -1447,10 +1539,7 @@ $btnDownload.Add_Click({
         if ($c -ne [System.Windows.MessageBoxResult]::Yes) { return }
     }
 
-    # Ensure modern TLS 1.2 / TLS 1.3 is active
-    try {
-        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls13
-    } catch {}
+    Enable-ModernTls
 
     $targetObj = if ($rbHDD.IsChecked) { $script:storageList[0] } else { $script:storageList[1] }
     $btnDownload.IsEnabled = $false

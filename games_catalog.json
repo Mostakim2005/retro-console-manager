@@ -13,10 +13,10 @@
     {
         "id":  2,
         "platform":  "PS1",
-        "title":  "Metal Gear Solid (Disc 1 \u0026 2)",
+        "title":  "Metal Gear Solid (Disc 1 only)",
         "genre":  "Cinematic Stealth",
         "size":  "980 MB",
-        "fileName":  "Metal Gear Solid (USA).zip",
+        "fileName":  "Metal Gear Solid (USA) (Disc 1).zip",
         "url":  "https://archive.org/download/Redump.orgSonyPlayStation-NTSC-UM/Metal%20Gear%20Solid%20%28USA%29%20%28Disc%201%29.zip",
         "year":  1998,
         "graphics":  "High (Realistic)"
@@ -35,10 +35,10 @@
     {
         "id":  4,
         "platform":  "PS1",
-        "title":  "Syphon Filter 2",
+        "title":  "Syphon Filter 2 (Disc 1 only)",
         "genre":  "Tactical Covert Ops",
         "size":  "820 MB",
-        "fileName":  "Syphon Filter 2 (USA).zip",
+        "fileName":  "Syphon Filter 2 (USA) (Disc 1).zip",
         "url":  "https://archive.org/download/Redump.orgSonyPlayStation-NTSC-US/Syphon%20Filter%202%20%28USA%29%20%28Disc%201%29.zip",
         "year":  2000,
         "graphics":  "High (Realistic)"
@@ -90,10 +90,10 @@
     {
         "id":  9,
         "platform":  "PS1",
-        "title":  "Resident Evil 2 (DualShock)",
+        "title":  "Resident Evil 2 (DualShock, Disc 1 only)",
         "genre":  "Survival Horror",
         "size":  "750 MB",
-        "fileName":  "Resident Evil 2 (USA).zip",
+        "fileName":  "Resident Evil 2 - Dual Shock Ver. (USA) (Disc 1).zip",
         "url":  "https://archive.org/download/Redump.orgSonyPlayStation-NTSC-UR/Resident%20Evil%202%20-%20Dual%20Shock%20Ver.%20%28USA%29%20%28Disc%201%29.zip",
         "year":  1998,
         "graphics":  "High (Realistic)"
@@ -178,10 +178,10 @@
     {
         "id":  17,
         "platform":  "PS1",
-        "title":  "Gran Turismo 2 (Arcade \u0026 Sim)",
+        "title":  "Gran Turismo 2 (Arcade Mode only)",
         "genre":  "Realistic Driving Sim",
         "size":  "950 MB",
-        "fileName":  "Gran Turismo 2 (USA).zip",
+        "fileName":  "Gran Turismo 2 (USA) (Arcade Mode).zip",
         "url":  "https://archive.org/download/Redump.orgSonyPlayStation-NTSC-UG/Gran%20Turismo%202%20%28USA%29%20%28Arcade%20Mode%29.zip",
         "year":  1999,
         "graphics":  "High (Realistic)"
@@ -192,7 +192,7 @@
         "title":  "Tony Hawk\u0027s Pro Skater 2",
         "genre":  "Skateboarding Extreme Sport",
         "size":  "420 MB",
-        "fileName":  "Tony Hawks Pro Skater 2 (USA).zip",
+        "fileName":  "Tony Hawk's Pro Skater 2 (USA).zip",
         "url":  "https://archive.org/download/Redump.orgSonyPlayStation-NTSC-UT/Tony%20Hawk%27s%20Pro%20Skater%202%20%28USA%29.zip",
         "year":  2000,
         "graphics":  "High (Realistic)"
@@ -222,10 +222,10 @@
     {
         "id":  21,
         "platform":  "PS1",
-        "title":  "Parasite Eve",
+        "title":  "Parasite Eve (Disc 1 only)",
         "genre":  "Cinematic Sci-Fi RPG / Horror",
         "size":  "580 MB",
-        "fileName":  "Parasite Eve (USA).zip",
+        "fileName":  "Parasite Eve (USA) (Disc 1).zip",
         "url":  "https://archive.org/download/Redump.orgSonyPlayStation-NTSC-UP/Parasite%20Eve%20%28USA%29%20%28Disc%201%29.zip",
         "year":  1998,
         "graphics":  "High (Realistic)"
