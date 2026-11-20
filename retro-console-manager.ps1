@@ -166,23 +166,73 @@ function Get-Catalog {
     return @()
 }
 
-function Check-GameLocation($item) {
-    $subDir = if ($item.platform -eq "PS1") { "PS1" } else { "PS2" }
-    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($item.fileName)
-    $shortName = $item.title.Split('(')[0].Split(':')[0].Trim()
+$script:libraryIndex = $null
+$script:gameExtensions = @(".chd", ".iso", ".bin", ".cue", ".m3u", ".pbp", ".gz", ".zip")
 
+function ConvertTo-MatchKey([string]$name) {
+    if ([string]::IsNullOrWhiteSpace($name)) { return "" }
+    $n = [System.IO.Path]::GetFileNameWithoutExtension($name)
+    $n = $n -replace '\s*\((USA|Europe|Japan|Rev\s*\d+|Disc\s*\d+|Arcade Mode|En,Fr,De[^)]*)\)', ''
+    return ($n -replace '[^A-Za-z0-9]', '').ToLowerInvariant()
+}
+
+function Get-LibraryIndex {
+    $idx = @{}
     foreach ($s in $script:storageList) {
-        $targetFolder = Join-Path $s.Path $subDir
-        if (Test-Path (Join-Path $targetFolder $item.fileName)) { return $s.Key }
-        if (Test-Path (Join-Path $targetFolder "$baseName.chd")) { return $s.Key }
-        if (Test-Path (Join-Path $targetFolder "$baseName.iso")) { return $s.Key }
-        if (Test-Path (Join-Path $targetFolder "$baseName.bin")) { return $s.Key }
-        
-        $found = Get-ChildItem -Path $targetFolder -ErrorAction SilentlyContinue | Where-Object { 
-            $_.BaseName -like "*$shortName*" -or $_.Name -like "*$shortName*" 
+        foreach ($sub in @("PS1", "PS2")) {
+            $dir = Join-Path $s.Path $sub
+            if (-not (Test-Path -LiteralPath $dir)) { continue }
+            try {
+                foreach ($f in [System.IO.Directory]::EnumerateFiles($dir, "*", [System.IO.SearchOption]::AllDirectories)) {
+                    $ext = [System.IO.Path]::GetExtension($f).ToLowerInvariant()
+                    if ($ext -notin $script:gameExtensions) { continue }
+                    $fileName = [System.IO.Path]::GetFileName($f)
+                    $k = ConvertTo-MatchKey $fileName
+                    if ($k.Length -lt 4) { continue }
+                    $composite = "$sub|$k"
+                    if (-not $idx.ContainsKey($composite)) { $idx[$composite] = @() }
+                    $idx[$composite] += [pscustomobject]@{
+                        Slot     = $s.Key
+                        FullPath = $f
+                        Ext      = $ext
+                    }
+                }
+            } catch {}
         }
-        if ($null -ne $found) { return $s.Key }
     }
+    return $idx
+}
+
+function Get-LibraryIndexCached {
+    if ($null -eq $script:libraryIndex) {
+        $script:libraryIndex = Get-LibraryIndex
+    }
+    return $script:libraryIndex
+}
+
+function Reset-LibraryIndexCache {
+    $script:libraryIndex = $null
+}
+
+function Resolve-GameEntry($item, $index = $null) {
+    if ($null -eq $index) { $index = Get-LibraryIndexCached }
+    $subDir = if ($item.platform -eq "PS1") { "PS1" } else { "PS2" }
+    $fileKey = ConvertTo-MatchKey $item.fileName
+    if ($fileKey.Length -ge 4) {
+        $comp = "$subDir|$fileKey"
+        if ($index.ContainsKey($comp)) { return $index[$comp][0] }
+    }
+    $titleKey = ConvertTo-MatchKey $item.title
+    if ($titleKey.Length -ge 6) {
+        $comp = "$subDir|$titleKey"
+        if ($index.ContainsKey($comp)) { return $index[$comp][0] }
+    }
+    return $null
+}
+
+function Check-GameLocation($item, $index = $null) {
+    $entry = Resolve-GameEntry $item $index
+    if ($null -ne $entry) { return $entry.Slot }
     return $null
 }
 
@@ -409,7 +459,8 @@ function Open-UrlInBrowser([string]$url) {
                     <TextBlock Text="Select:" Foreground="#94A3B8" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
                     <Button Name="btnSelectAll" Content="All" Margin="0,0,5,0" Padding="10,4"/>
                     <Button Name="btnSelectNone" Content="None" Margin="0,0,5,0" Padding="10,4"/>
-                    <Button Name="btnSelectInvert" Content="Invert" Margin="0,0,12,0" Padding="10,4"/>
+                    <Button Name="btnSelectInvert" Content="Invert" Margin="0,0,8,0" Padding="10,4"/>
+                    <Button Name="btnClearAllSel" Content="Clear All" Margin="0,0,10,0" Padding="8,4" ToolTip="Clear all selections including any hidden by active filters"/>
                     <TextBlock Name="lblSelectionCount" Text="0 selected" Foreground="#38BDF8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <Button Name="btnHelp" Content="?" Width="26" Height="26" Padding="0" Margin="0,0,8,0" FontWeight="Bold" 
                             Foreground="#38BDF8" Background="#1E293B" BorderBrush="#334155" BorderThickness="1" 
@@ -553,6 +604,7 @@ $txtSearch         = $window.FindName("txtSearch")
 $btnSelectAll      = $window.FindName("btnSelectAll")
 $btnSelectNone     = $window.FindName("btnSelectNone")
 $btnSelectInvert   = $window.FindName("btnSelectInvert")
+$btnClearAllSel    = $window.FindName("btnClearAllSel")
 $lblSelectionCount = $window.FindName("lblSelectionCount")
 $btnHelp           = $window.FindName("btnHelp")
 $btnResetFilters   = $window.FindName("btnResetFilters")
@@ -592,8 +644,10 @@ $brushDownloadIdle  = [System.Windows.Media.BrushConverter]::new().ConvertFromSt
 $brushDownloadReady = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#059669")
 $brushBrowserBlue   = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2563EB")
 
-$script:contextModel  = $null
-$script:suppressCount = $false
+$script:contextModel        = $null
+$script:suppressCount       = $false
+$script:suppressTextChanged = $false
+$script:selectedIds         = New-Object System.Collections.Generic.HashSet[int]
 
 $allCatalog = Get-Catalog
 
@@ -656,7 +710,9 @@ function Select-CustomStorageFolder([int]$slotIndex) {
                 }
                 Ensure-StorageFolders
                 Save-StorageConfig
+                Reset-LibraryIndexCache
                 Refresh-StorageLabels
+                Update-PipelineStatus
                 Refresh-GameList
                 $lblStatus.Text = "Updated storage path to: $chosen"
             }
@@ -678,15 +734,61 @@ $rbSSD.Add_MouseDoubleClick({
     Select-CustomStorageFolder 1
 })
 
+function Set-GameSelected([int]$id, [bool]$value) {
+    if ($value) { [void]$script:selectedIds.Add($id) }
+    else { [void]$script:selectedIds.Remove($id) }
+}
+
+function Get-VisibleSelectedCount {
+    $c = 0
+    foreach ($m in $displayedModels) {
+        if ($m.IsSelected) { $c++ }
+    }
+    return $c
+}
+
+function Get-SelectedCatalogItems {
+    return @($allCatalog | Where-Object { $script:selectedIds.Contains([int]$_.id) })
+}
+
 function Get-SelectedGames {
-    return @($displayedModels | Where-Object { $_.IsSelected -eq $true })
+    $byId = @{}
+    foreach ($m in $displayedModels) {
+        if ($null -ne $m.RawItem) { $byId[[int]$m.RawItem.id] = $m }
+    }
+    $result = @()
+    foreach ($item in $allCatalog) {
+        $id = [int]$item.id
+        if (-not $script:selectedIds.Contains($id)) { continue }
+        if ($byId.ContainsKey($id)) {
+            $result += $byId[$id]
+        } else {
+            $stub = New-Object RetroGameItem
+            $stub.Id = "$($item.id)."
+            $stub.Platform = $item.platform
+            $stub.Title = $item.title
+            $stub.Size = $item.size
+            $stub.SizeBytes = $item.SizeBytes
+            $stub.SizeTier = [int]$item.SizeTier
+            $stub.RawItem = $item
+            $stub.IsSelected = $true
+            $result += $stub
+        }
+    }
+    return $result
 }
 
 function Update-SelectionCount {
     if ($script:suppressCount) { return }
-    $sel = Get-SelectedGames
-    $count = $sel.Count
-    $lblSelectionCount.Text = "$count selected"
+    $count = $script:selectedIds.Count
+    $visCount = Get-VisibleSelectedCount
+    $hiddenCount = [math]::Max(0, $count - $visCount)
+    if ($hiddenCount -gt 0) {
+        $lblSelectionCount.Text = "$count selected ($hiddenCount outside filter)"
+    } else {
+        $lblSelectionCount.Text = "$count selected"
+    }
+    $btnClearAllSel.IsEnabled = ($count -gt 0)
     if ($count -eq 0) {
         $btnDownload.Content = "Download Selected Games"
         $btnDownload.Background = $brushDownloadIdle
@@ -835,6 +937,12 @@ function Update-PipelineStatus {
 
 function Refresh-GameList {
     $search = $txtSearch.Text.Trim()
+    $index = Get-LibraryIndexCached
+    $statusById = @{}
+    foreach ($c in $allCatalog) {
+        $statusById[[int]$c.id] = Check-GameLocation $c $index
+    }
+
     $items = @($allCatalog)
 
     # 1. Console Filter
@@ -850,40 +958,26 @@ function Refresh-GameList {
         3 { $items = $items | Where-Object { $_.graphics -like "*Retro*" } }
     }
 
-    # 3. Status Filter
+    # 3. Status Filter (reuses precomputed statusById)
     if ($script:statusFilterState -eq 1) {
-        $items = $items | Where-Object { $null -eq (Check-GameLocation $_) }
+        $items = $items | Where-Object { $null -eq $statusById[[int]$_.id] }
     } elseif ($script:statusFilterState -eq 2) {
-        $items = $items | Where-Object { $null -ne (Check-GameLocation $_) }
+        $items = $items | Where-Object { $null -ne $statusById[[int]$_.id] }
     }
 
     # 4. Search Filter
     if (-not [string]::IsNullOrWhiteSpace($search)) {
-        $items = $items | Where-Object { 
+        $items = $items | Where-Object {
             $_.title -like "*$search*" -or $_.genre -like "*$search*" -or $_.platform -like "*$search*"
         }
     }
 
-    # 5. Coherent Multi-Tier Sorting
+    # 5. Coherent Multi-Tier Sorting with Deterministic ID Tie-Break
     $sortProps = @()
-    $sizeIdx = $script:sortPriority.IndexOf("Size")
-    $hasSecondaryAfterSize = $false
-    if ($sizeIdx -ge 0) {
-        for ($k = $sizeIdx + 1; $k -lt $script:sortPriority.Count; $k++) {
-            if ($script:sortPriority[$k] -eq "Year" -or $script:sortPriority[$k] -eq "Genre") {
-                $hasSecondaryAfterSize = $true
-                break
-            }
-        }
-    }
-
+    $hasSizeSort = $script:sortPriority.Contains("Size")
     foreach ($col in $script:sortPriority) {
         if ($col -eq "Size") {
-            if ($hasSecondaryAfterSize) {
-                $sortProps += @{ Expression = { [int]$_.SizeTier }; Descending = ($script:sizeSortState -eq 2) }
-            } else {
-                $sortProps += @{ Expression = { [double]$_.SizeBytes }; Descending = ($script:sizeSortState -eq 2) }
-            }
+            $sortProps += @{ Expression = { [int]$_.SizeTier }; Descending = ($script:sizeSortState -eq 2) }
         } elseif ($col -eq "Year") {
             $sortProps += @{ Expression = { [int]$_.year }; Descending = ($script:yearSortState -eq 1) }
         } elseif ($col -eq "Genre") {
@@ -892,53 +986,45 @@ function Refresh-GameList {
             $sortProps += @{ Expression = { $_.title }; Descending = ($script:titleSortState -eq 2) }
         }
     }
-
-    if ($hasSecondaryAfterSize) {
+    if ($hasSizeSort) {
         $sortProps += @{ Expression = { [double]$_.SizeBytes }; Descending = ($script:sizeSortState -eq 2) }
     }
+    $sortProps += @{ Expression = { [int]$_.id }; Descending = $false }
+    $items = $items | Sort-Object -Property $sortProps
 
-    if ($sortProps.Count -gt 0) {
-        $items = $items | Sort-Object -Property $sortProps
-    } else {
-        $items = $items | Sort-Object { [int]$_.id }
-    }
+    $script:suppressCount = $true
+    try {
+        $displayedModels.Clear()
+        foreach ($item in $items) {
+            $loc = $statusById[[int]$item.id]
+            $statusStr = if ($null -ne $loc) { "INSTALLED ($loc)" } else { "AVAILABLE" }
 
-    # Preserve selections if already checked
-    $selectedIds = New-Object System.Collections.Generic.HashSet[int]
-    foreach ($m in $displayedModels) {
-        if ($m.IsSelected -and $null -ne $m.RawItem) {
-            [void]$selectedIds.Add([int]$m.RawItem.id)
+            $m = New-Object RetroGameItem
+            $m.Id = "$($item.id)."
+            $m.Platform = $item.platform
+            $m.Title = $item.title
+            $m.Year = "$($item.year)"
+            $m.Genre = $item.genre
+            $m.Graphics = $item.graphics
+            $m.Size = $item.size
+            $m.SizeBytes = $item.SizeBytes
+            $m.SizeTier = [int]$item.SizeTier
+            $m.Status = $statusStr
+            $m.RawItem = $item
+            $m.IsSelected = $script:selectedIds.Contains([int]$item.id)
+
+            $m.add_PropertyChanged({
+                param($sender, $e)
+                if ($e.PropertyName -eq "IsSelected" -and $null -ne $sender.RawItem) {
+                    Set-GameSelected ([int]$sender.RawItem.id) $sender.IsSelected
+                    Update-SelectionCount
+                }
+            })
+
+            $displayedModels.Add($m)
         }
-    }
-
-    $displayedModels.Clear()
-    foreach ($item in $items) {
-        $loc = Check-GameLocation $item
-        $statusStr = if ($null -ne $loc) { "INSTALLED ($loc)" } else { "AVAILABLE" }
-        
-        $m = New-Object RetroGameItem
-        $m.Id = "$($item.id)."
-        $m.Platform = $item.platform
-        $m.Title = $item.title
-        $m.Year = "$($item.year)"
-        $m.Genre = $item.genre
-        $m.Graphics = $item.graphics
-        $m.Size = $item.size
-        $m.SizeBytes = $item.SizeBytes
-        $m.SizeTier = [int]$item.SizeTier
-        $m.Status = $statusStr
-        $m.RawItem = $item
-        $m.IsSelected = $selectedIds.Contains([int]$item.id)
-
-        # Subscribe to property change for live count updates
-        $m.add_PropertyChanged({
-            param($sender, $e)
-            if ($e.PropertyName -eq "IsSelected") {
-                Update-SelectionCount
-            }
-        })
-
-        $displayedModels.Add($m)
+    } finally {
+        $script:suppressCount = $false
     }
 
     $lvGames.ItemsSource = $displayedModels
@@ -969,24 +1055,15 @@ function Get-ContextTargets {
 }
 
 function Open-GameLocalLocation($item) {
-    $loc = Check-GameLocation $item
-    $targetObj = if ($loc -eq "HDD") {
-        $script:storageList[0]
-    } elseif ($loc -eq "SSD") {
-        $script:storageList[1]
-    } elseif ($rbHDD.IsChecked) {
-        $script:storageList[0]
-    } else {
-        $script:storageList[1]
-    }
-    $subDir = if ($item.platform -eq "PS1") { "PS1" } else { "PS2" }
-    $destFolder = Join-Path $targetObj.Path $subDir
-    $exactFile = Join-Path $destFolder $item.fileName
-    if (Test-Path -LiteralPath $exactFile) {
-        Start-Process explorer.exe -ArgumentList "/select,`"$exactFile`""
-        $lblStatus.Text = "Selected installed file for '$($item.title)' on $($targetObj.Key)."
+    $entry = Resolve-GameEntry $item (Get-LibraryIndexCached)
+    if ($null -ne $entry -and (Test-Path -LiteralPath $entry.FullPath)) {
+        Start-Process explorer.exe -ArgumentList "/select,`"$($entry.FullPath)`""
+        $lblStatus.Text = "Selected installed file for '$($item.title)' on $($entry.Slot)."
         return
     }
+    $targetObj = if ($rbHDD.IsChecked) { $script:storageList[0] } else { $script:storageList[1] }
+    $subDir = if ($item.platform -eq "PS1") { "PS1" } else { "PS2" }
+    $destFolder = Join-Path $targetObj.Path $subDir
     if (-not (Test-Path -LiteralPath $destFolder)) {
         try { New-Item -ItemType Directory -Path $destFolder -Force | Out-Null } catch {}
     }
@@ -1214,31 +1291,51 @@ $hdrStatus.Add_Click({
     Refresh-GameList
 })
 
-# --- Multi-Select Buttons ---
+# --- Multi-Select Buttons (Operate on Visible Rows; Clear All Clears Hidden Too) ---
 $btnSelectAll.Add_Click({
     $script:suppressCount = $true
     try { foreach ($m in $displayedModels) { $m.IsSelected = $true } } finally { $script:suppressCount = $false }
     Update-SelectionCount
+    $hidden = [math]::Max(0, $script:selectedIds.Count - (Get-VisibleSelectedCount))
+    if ($hidden -gt 0) { $lblStatus.Text = "Selected $($displayedModels.Count) visible rows ($hidden additional selections outside current filter)." }
 })
 
 $btnSelectNone.Add_Click({
     $script:suppressCount = $true
     try { foreach ($m in $displayedModels) { $m.IsSelected = $false } } finally { $script:suppressCount = $false }
     Update-SelectionCount
+    if ($script:selectedIds.Count -gt 0) { $lblStatus.Text = "Cleared visible selections; $($script:selectedIds.Count) selections kept outside current filter (use Clear All to clear all)." }
 })
 
 $btnSelectInvert.Add_Click({
     $script:suppressCount = $true
     try { foreach ($m in $displayedModels) { $m.IsSelected = -not $m.IsSelected } } finally { $script:suppressCount = $false }
     Update-SelectionCount
+    $hidden = [math]::Max(0, $script:selectedIds.Count - (Get-VisibleSelectedCount))
+    if ($hidden -gt 0) { $lblStatus.Text = "Inverted $($displayedModels.Count) visible rows; $hidden selections kept outside current filter." }
+})
+
+$btnClearAllSel.Add_Click({
+    $script:suppressCount = $true
+    try {
+        $script:selectedIds.Clear()
+        foreach ($m in $displayedModels) { $m.IsSelected = $false }
+    } finally { $script:suppressCount = $false }
+    Update-SelectionCount
+    $lblStatus.Text = "Cleared all selections."
 })
 
 # --- Dedicated Reset All Filters and Sorts Button ---
 function Reset-AllFiltersAndSorts {
-    $script:consoleState = 0
-    $script:graphicsState = 0
-    $script:statusFilterState = 0
-    $txtSearch.Text = ""
+    $script:suppressTextChanged = $true
+    try {
+        $script:consoleState = 0
+        $script:graphicsState = 0
+        $script:statusFilterState = 0
+        $txtSearch.Text = ""
+    } finally {
+        $script:suppressTextChanged = $false
+    }
 
     $script:yearSortState = 0
     $script:sizeSortState = 0
@@ -1249,8 +1346,8 @@ function Reset-AllFiltersAndSorts {
     $script:sortPriority.Add("Title")
 
     Update-HeaderLabels
+    Update-PipelineStatus
     Refresh-GameList
-    $lblStatus.Text = "All filters and sorting reset to default."
 }
 
 $btnResetFilters.Add_Click({
@@ -1286,9 +1383,18 @@ $btnHelp.Add_Click({
     [System.Windows.MessageBox]::Show($helpMsg, "Controls & Tips", "OK", "Information")
 })
 
-$txtSearch.Add_TextChanged({
+$script:searchTimer = New-Object System.Windows.Threading.DispatcherTimer
+$script:searchTimer.Interval = [TimeSpan]::FromMilliseconds(180)
+$script:searchTimer.Add_Tick({
+    $script:searchTimer.Stop()
     Update-PipelineStatus
     Refresh-GameList
+})
+
+$txtSearch.Add_TextChanged({
+    if ($script:suppressTextChanged) { return }
+    $script:searchTimer.Stop()
+    $script:searchTimer.Start()
 })
 
 $btnBios.Add_Click({
@@ -1334,6 +1440,11 @@ $btnDownload.Add_Click({
     if ($selectedModels.Count -eq 0) {
         [System.Windows.MessageBox]::Show("Please click checkboxes or rows to select games for download!", "No Games Selected", "OK", "Information")
         return
+    }
+    $hiddenSel = [math]::Max(0, $selectedModels.Count - (Get-VisibleSelectedCount))
+    if ($hiddenSel -gt 0) {
+        $c = [System.Windows.MessageBox]::Show("Download $($selectedModels.Count) games ($hiddenSel not visible under the current filter)?", "Confirm Selection Scope", "YesNo", "Question")
+        if ($c -ne [System.Windows.MessageBoxResult]::Yes) { return }
     }
 
     # Ensure modern TLS 1.2 / TLS 1.3 is active
@@ -1444,6 +1555,7 @@ $btnDownload.Add_Click({
     $lblStatus.Text = "Finished batch: $completedCount downloaded, $skippedCount duplicates skipped, $failedCount failed/blocked."
     try { [System.Console]::Beep(1000, 200) } catch {}
     
+    Reset-LibraryIndexCache
     Refresh-StorageLabels
     Refresh-GameList
 
